@@ -283,7 +283,7 @@ void TDataProvider::CopyDir(const TStr& Src, const TStr& Dest) {
 }
 
 TStr TDataProvider::GetBackupDbPath() const {
-	return "./db-temp/";
+	return QmParam.DbFPath.GetSubStr(0, QmParam.DbFPath.Len()-2) + "-temp/";
 }
 
 const TChA TAdriaMsg::POST = "POST";
