@@ -20,11 +20,7 @@ BOOST = /usr/lib/x86_64-linux-gnu
 
 # lib includes
 STATIC_LIBS = $(BOOST)/libboost_system.a $(BOOST)/libboost_filesystem.a $(QMINER)/qm.a $(GLIB)/glib.a $(LIBUV)/libuv.a \
-	$(LIBV8)/libv8_base.x64.a $(LIBV8)/libv8_snapshot.a
-
-# QMiner code
-#QMOBJS = $(QMINER)/src/qminer_core.o $(QMINER)/src/qminer_ftr.o $(QMINER)/src/qminer_aggr.o $(QMINER)/src/qminer_op.o \
-	$(QMINER)/src/qminer_gs.o $(QMINER)/src/qminer_js.o $(QMINER)/src/qminer_srv.o src/adria_server.o
+	$(LIBV8_STATIC_LIBS)
 
 QMOBJS = src/adria_server.o
 MAINOBJ = src/main.o
@@ -33,12 +29,13 @@ all: adria_miner
 
 adria_miner:
 	# compile glib
-	make -C $(GLIB)
+#	make -C $(GLIB)
 	# compile qminer
-	make -C $(QMINER)
+#	make -C $(QMINER)
 	# compile adria miner
 	make -C src
 	# create aminer commandline tool
+	#$(CC) -o aminer $(QMOBJS) $(MAINOBJ) $(STATIC_LIBS) $(LDFLAGS) $(LIBS)
 	$(CC) -o aminer $(QMOBJS) $(MAINOBJ) $(STATIC_LIBS) $(LDFLAGS) $(LIBS) 
 	# create qminer static library
 	rm -f aminer.a

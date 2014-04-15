@@ -38,7 +38,7 @@ void TDataProvider::InitAggregates(TQm::PBase& Base, const PNotify& Notify) {
 				"timestamp",
 				FieldInterpolatorPrV,
 				"LABResampled",
-				1000*60,
+				1000*60*30,
 				0,
 				false
 		);

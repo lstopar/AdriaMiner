@@ -1,7 +1,4 @@
 #include <qminer.h>
-#include <qminer_srv.h>
-#include <qminer_gs.h>
-#include <qminer_js.h>
 #include "adria_server.h"
 
 const TStr TempLogFName = "unsaved.log";
