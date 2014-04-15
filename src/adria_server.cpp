@@ -38,7 +38,7 @@ void TDataProvider::InitAggregates(TQm::PBase& Base, const PNotify& Notify) {
 				"timestamp",
 				FieldInterpolatorPrV,
 				"LABResampled",
-				10000,//	1000*60,
+				1000*60*30,
 				0,
 				false
 		);
@@ -118,8 +118,6 @@ void TDataProvider::InitQmBase() {
 				QmFAccess, QmParam.IndexCacheSize,
 				QmParam.DefStoreCacheSize,
 				QmParam.StoreNmCacheSizeH);
-
-
 	}
 }
 
