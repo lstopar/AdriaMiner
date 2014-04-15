@@ -1,6 +1,8 @@
 #!/bin/bash
 
-AM_BUILD=build
+AM_BUILD=/home/pi/adria/qminer/AdriaMiner/build
 
-rm lock
-$AM_BUILD/aminer start -conf=$AM_BUILD/../config/adria_miner.conf
+while true; do
+	rm lock
+	$AM_BUILD/aminer start -conf=$AM_BUILD/../config/adriaberry.conf
+done
