@@ -8,7 +8,6 @@ include ../Makefile.config
 QMINER = ../../QMiner
 LIBV8 = $(QMINER)/lib/v8/include
 LIBUV = ../../libuv/include
-#BOOST = /usr/
 
 GLIB = ../../glib
 GLIB_BASE = $(GLIB)/base/

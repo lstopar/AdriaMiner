@@ -28,13 +28,12 @@ all: adria_miner
 
 adria_miner:
 	# compile glib
-#	make -C $(GLIB)
+	make -C $(GLIB)
 	# compile qminer
 #	make -C $(QMINER)
 	# compile adria miner
 	make -C src
 	# create aminer commandline tool
-	#$(CC) -o aminer $(QMOBJS) $(MAINOBJ) $(STATIC_LIBS) $(LDFLAGS) $(LIBS)
 	$(CC) -o aminer $(QMOBJS) $(MAINOBJ) $(STATIC_LIBS) $(LDFLAGS) $(LIBS) 
 	# create qminer static library
 	rm -f aminer.a
