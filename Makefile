@@ -13,7 +13,7 @@ VERSION = 0.5.0
 
 # dependencies
 LIBUV = ../libuv
-LIBV8 = ../QMiner/lib/v8/out/x64.release/obj.target/tools/gyp
+#LIBV8 = ../QMiner/lib/v8/out/x64.release/obj.target/tools/gyp
 GLIB = ../glib
 QMINER = ../QMiner
 
