@@ -15,8 +15,9 @@ GLIB_NET = $(GLIB)/net/
 GLIB_MINE = $(GLIB)/mine/
 GLIB_MISC = $(GLIB)/misc/
 GLIB_THREAD = $(GLIB)/concurrent/
+EIGEN = $(GLIB)/eigen32/
 
-INCLUDE = -I. -I$(GLIB_BASE) -I$(GLIB_NET) -I$(GLIB_MINE) -I$(GLIB_MISC) -I$(GLIB_THREAD) -I$(LIBUV) -I$(LIBV8) -I$(QMINER)/src
+INCLUDE = -I. -I$(EIGEN) -I$(GLIB_BASE) -I$(GLIB_NET) -I$(GLIB_MINE) -I$(GLIB_MISC) -I$(GLIB_THREAD) -I$(LIBUV) -I$(LIBV8) -I$(QMINER)/src
 
 # main object files
 MAINOBJS = main.o adria_server.o

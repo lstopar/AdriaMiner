@@ -3,13 +3,13 @@
 
 #define BOOST_NO_CXX11_SCOPED_ENUMS
 
-#include <boost/filesystem.hpp>
 #include <qminer.h>
 #include <qminer_js.h>
 #include <base.h>
 #include <net.h>
 #include <mine.h>
 #include <thread.h>
+#include <boost/filesystem.hpp>
 
 namespace TDataAccess {
 
