@@ -16,10 +16,12 @@ LIBUV = ../libuv
 #LIBV8 = ../QMiner/lib/v8/out/x64.release/obj.target/tools/gyp
 GLIB = ../glib
 QMINER = ../QMiner
+BOOST = boost/stage/lib
 
 # lib includes
 STATIC_LIBS = $(BOOST)/libboost_system.a $(BOOST)/libboost_filesystem.a $(QMINER)/qm.a $(GLIB)/glib.a $(LIBUV)/libuv.a \
 	$(LIBV8_STATIC_LIBS)
+
 
 QMOBJS = src/adria_server.o
 MAINOBJ = src/main.o
@@ -28,9 +30,9 @@ all: adria_miner
 
 adria_miner:
 	# compile glib
-#	make -C $(GLIB)
+	make -C $(GLIB)
 	# compile qminer
-#	make -C $(QMINER)
+	make -C $(QMINER)
 	# compile adria miner
 	make -C src
 	# create aminer commandline tool

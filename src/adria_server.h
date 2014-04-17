@@ -1,7 +1,7 @@
 #ifndef ADRIA_SERVER_H_
 #define ADRIA_SERVER_H_
 
-#define BOOST_NO_CXX11_SCOPED_ENUMS
+//#define BOOST_NO_CXX11_SCOPED_ENUMS
 
 #include <qminer.h>
 #include <qminer_js.h>
