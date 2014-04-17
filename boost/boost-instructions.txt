@@ -1,9 +1,0 @@
-Compilation instructions
-
-1) ./bootstrap.sh --with-toolset=gcc --prefix=/usr/local
-2) ./b2 clean
-3) edit user-config.jam, insert this line: 
-using gcc : 4.7 : : <cxxflags>-std=c++11 ;
-4) ./b2 toolset=gcc 
-#./b2 toolset=gcc-c++11
-

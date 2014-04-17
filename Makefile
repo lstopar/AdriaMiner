@@ -16,7 +16,7 @@ LIBUV = ../libuv
 #LIBV8 = ../QMiner/lib/v8/out/x64.release/obj.target/tools/gyp
 GLIB = ../glib
 QMINER = ../QMiner
-BOOST = boost/stage/lib
+BOOST = ../boost/stage/lib
 
 # lib includes
 STATIC_LIBS = $(BOOST)/libboost_system.a $(BOOST)/libboost_filesystem.a $(QMINER)/qm.a $(GLIB)/glib.a $(LIBUV)/libuv.a \
