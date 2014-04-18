@@ -8,7 +8,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 import db
 from datetime import date, timedelta
 
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=1)
 _write_lock = threading.Lock()
 
 _sock = None
