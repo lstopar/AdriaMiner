@@ -72,6 +72,14 @@ void RegSigHandlers(const PNotify& Notify) {
 	signal(SIGSTOP, HandleSignal);
 }
 
+void BuildUnicode() {
+	printf("Building unicode DB...\n");
+	TUniChDb ChDb;
+	ChDb.LoadTxt("/home/lstopar/workspace/JSI/qminer/glib/bin/UnicodeDefTxt");
+	ChDb.SaveBin("/home/lstopar/workspace/JSI/qminer/UnicodeDef.Bin");
+	printf("Unicode complete!\n");
+}
+
 /*
  * Starts QMiner
  */
@@ -177,6 +185,7 @@ int InitQm(int argc, char* argv[]) {
 		// do not mess with folders with existing running qminer instance
 		Lock.Lock();
 		{
+			BuildUnicode();
 			// parse schema (if no given, create an empty array)
 			PJsonVal SchemaVal = SchemaFNm.Empty() ? TJsonVal::NewArr() :
 				TJsonVal::GetValFromStr(TStr::LoadTxt(SchemaFNm));
