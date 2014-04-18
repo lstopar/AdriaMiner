@@ -14,6 +14,7 @@
 *.manifest
 *.obj
 *.rc
+*.pyc
 *.manifest.res
 *.lastbuildstate
 *.unsuccessfulbuild
