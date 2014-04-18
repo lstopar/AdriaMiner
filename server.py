@@ -4,11 +4,11 @@ from constants import SERVER_IP, SERVER_PORT, LOG_LEVEL, LOG_RELEASE, LOG_DEBUG
 import sys
 import time
 import threading
-from concurrent.futures.thread import ThreadPoolExecutor
+#from concurrent.futures.thread import ThreadPoolExecutor
 import db
 from datetime import date, timedelta
 
-_executor = ThreadPoolExecutor(max_workers=1)
+#_executor = ThreadPoolExecutor(max_workers=1)
 _write_lock = threading.Lock()
 
 _sock = None
@@ -71,9 +71,9 @@ def _process_msg(msg):
     '''
     try:
         if msg.method == Message.method_push and msg.command == 'res_table':
-            _executor.submit(_process_push, msg.content)
+            _process_push(msg.content)
         elif msg.method == Message.method_get and msg.command == 'history' and msg.has_params() and msg.has_recipient_id():
-            _executor.submit(_fetch_history, int(msg.params), msg.recipient_id)
+            _fetch_history(int(msg.params), msg.recipient_id)
         else:
             print 'Unknown message: ', str(msg)
     except:
