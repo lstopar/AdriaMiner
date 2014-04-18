@@ -1,5 +1,3 @@
-from threading import Thread
-import time
 import mysql.connector
 from constants import MYSQL_CONFIG, LOG_LEVEL, LOG_RELEASE
 import sys
@@ -52,7 +50,7 @@ def fetch_history(can_id, from_time):
             cursor.close()
         if connection is not None:
             connection.close()
-            
+        
     return result
 
 def _insert_to_db(can_id, val):
@@ -86,13 +84,3 @@ def set_value(can_id, val):
     _vals_table[can_id] = val
     _insert_to_db(can_id, val)
     
-def save_to_db():
-    while True:
-        time.sleep(60*30)
-#         time.sleep(2)
-        table = [val for val in _vals_table]
-        print str(table)
-    
-_save_thread = Thread(target=save_to_db)
-_save_thread.daemon = True
-_save_thread.start()
