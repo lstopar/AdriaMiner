@@ -6,6 +6,7 @@ import time
 import threading
 from concurrent.futures.thread import ThreadPoolExecutor
 import db
+from datetime import date, timedelta
 
 _executor = ThreadPoolExecutor(max_workers=2)
 _write_lock = threading.Lock()
@@ -44,7 +45,8 @@ def _fetch_history(can_id, dev_id):
         if LOG_LEVEL <= LOG_RELEASE:
             print 'Fetching history for can: ' + str(can_id)
             
-        hist = db.fetch_history(can_id, 1000)
+        hist = db.fetch_history(can_id, date.today()-timedelta(days=1))
+        
         hist_content = ','.join([str(entry[0]) + ',' + str(entry[1]) for entry in hist])
 
         write_str('PUSH history?{}&{}\r\nLength={}\r\n{}\r\n'.format(can_id, dev_id, len(hist_content), hist_content))
