@@ -38,8 +38,6 @@ test/JavaScriptAPI/db/
 test/JavaScriptAPI/qm.conf
 
 .project
-.cproject
-db/
-db-temp/
+.pydevproject
+.settings/
 
-qm*.log
