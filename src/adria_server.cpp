@@ -253,7 +253,7 @@ void TAdriaMsg::ReadLine(const PSIn& In, TChA& Out) const {
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Read line: %s", Out.CStr());
 }
 
-void TAdriaMsg::Read(const PSIn& SIn, const PNotify& Notify) {
+void TAdriaMsg::Read(const PSIn& SIn) {
 	Notify->OnNotify(TNotifyType::ntInfo, "Parsing method...");
 
 	// read the method
@@ -388,7 +388,7 @@ void TAdriaCommunicator::OnRead(const uint64& SockId, const PSIn& SIn) {
 
 		Notify->OnNotify(TNotifyType::ntInfo, "OnRead...");
 		// parse the protocol
-		CurrMsg->Read(SIn, Notify);
+		CurrMsg->Read(SIn);
 
 		if (CurrMsg->IsComplete()) {
 			OnMsgReceived(CurrMsg);
