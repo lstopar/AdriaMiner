@@ -137,7 +137,7 @@ public:
 	TStr GetStr() const;
 
 	bool IsComplete() const;
-	void Read(const PSIn& In);
+	void Read(const PSIn& In, const PNotify& Notify);
 
 	bool IsPush() const { return IsMethod(TAdriaMsgMethod::ammPush); }
 	bool IsPost() const { return IsMethod(TAdriaMsgMethod::ammPost); }

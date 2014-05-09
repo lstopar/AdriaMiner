@@ -15,39 +15,6 @@ bool StopSrv() {
 	return true;
 }
 
-void HandleSignal(int Sig) {
-	printf("Received signal: %d", Sig);
-
-	switch (Sig) {
-	case SIGTERM: {
-		StopSrv();
-		break;
-	case SIGINT: {
-		StopSrv();
-		break;
-	} case SIGHUP: {
-		StopSrv();
-		break;
-	} case SIGSTOP: {
-		StopSrv();
-		break;
-	} default:
-		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Received unknown signal: %d", Sig);
-	}
-	}
-}
-
-void RegSigHandlers(const PNotify& Notify) {
-
-	// register signal handlers
-	Notify->OnNotify(TNotifyType::ntInfo, "Registering signal handlers...");
-
-	signal(SIGTERM, HandleSignal);
-	signal(SIGINT, HandleSignal);
-	signal(SIGHUP, HandleSignal);
-	signal(SIGSTOP, HandleSignal);
-}
-
 void BuildUnicode() {
 	printf("Building unicode DB...\n");
 	TUniChDb ChDb;
@@ -64,16 +31,17 @@ int main(int argc, char* argv[]) {
     setbuf(stdout, NULL);
 #endif    
     try {
-//	BuildUnicode();
-//    	TStr HostNm = "95.87.154.134";
-    	TStr HostNm = "127.0.0.1";
-    	int Port = 9999;
+    	Env = TEnv(argc, argv, Notify);
+		Env.SetNoLine(); // making output prettier
+
+		const int PortN = Env.GetIfArgPrefixInt("-port=", 8080, "Port number");
+		const TStr HostNm = Env.GetIfArgPrefixStr("-host=", "127.0.0.1", "Host");
 
     	// start server
-    	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Starting socket client, host: %s, port %d", HostNm.CStr(), Port);
+    	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Starting socket client, host: %s, port %d", HostNm.CStr(), PortN);
 
     	TAdriaComm::TDataProvider DataProvider(Notify);
-		AdriaServer = TAdriaComm::TAdriaServer::New(TAdriaComm::TAdriaCommunicator::New(HostNm, Port, Notify), DataProvider, Notify);
+		AdriaServer = TAdriaComm::TAdriaServer::New(TAdriaComm::TAdriaCommunicator::New(HostNm, PortN, Notify), DataProvider, Notify);
 
 		TLoop::Ref();
 		TLoop::Run();

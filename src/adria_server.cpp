@@ -388,7 +388,7 @@ void TAdriaCommunicator::OnRead(const uint64& SockId, const PSIn& SIn) {
 
 		Notify->OnNotify(TNotifyType::ntInfo, "OnRead...");
 		// parse the protocol
-		CurrMsg->Read(SIn);
+		CurrMsg->Read(SIn, Notify);
 
 		if (CurrMsg->IsComplete()) {
 			OnMsgReceived(CurrMsg);
