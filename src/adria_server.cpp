@@ -248,6 +248,8 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 }
 
 void TAdriaMsg::ReadLine(const PSIn& In, TChA& Out) const {
+	Notify->OnNotify(TNotifyType::ntInfo, "Reading line...");
+
 	ReadUntil(In, "\r\n", Out);
 
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Read line: %s", Out.CStr());
