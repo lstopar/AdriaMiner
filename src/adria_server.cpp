@@ -263,6 +263,8 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 	Notify->OnNotify(TNotifyType::ntInfo, "Created line buff...");
 	ReadLine(SIn, LineBuff);
 
+	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Received line with length: %d, deleting last two characters...", LineBuff.Len());
+
 	// ignore the EOL
 	LineBuff.DelLastCh();	LineBuff.DelLastCh();
 
