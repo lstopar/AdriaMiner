@@ -259,7 +259,9 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 	Notify->OnNotify(TNotifyType::ntInfo, "Parsing method...");
 
 	// read the method
-	TChA LineBuff;	ReadLine(SIn, LineBuff);
+	TChA LineBuff;
+	Notify->OnNotify(TNotifyType::ntInfo, "Created line buff...");
+	ReadLine(SIn, LineBuff);
 
 	// ignore the EOL
 	LineBuff.DelLastCh();	LineBuff.DelLastCh();
