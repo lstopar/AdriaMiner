@@ -1,7 +1,5 @@
 #include "adria_server.h"
 
-const TStr TempLogFName = "unsaved.log";
-
 PNotify Notify = TStdNotify::New();
 TAdriaComm::PAdriaServer AdriaServer;
 
@@ -66,14 +64,15 @@ int main(int argc, char* argv[]) {
     setbuf(stdout, NULL);
 #endif    
     try {
-    	TStr HostNm = "127.0.0.1";
+    	TStr HostNm = "95.87.154.134";
+//    	TStr HostNm = "127.0.0.1";
     	int Port = 9999;
-    	TStr DbFNm = "./db/";
 
     	// start server
     	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Starting socket client, host: %s, port %d", HostNm.CStr(), Port);
 
-		AdriaServer = TAdriaComm::TAdriaServer::New(TAdriaComm::TAdriaCommunicator::New(HostNm, Port, Notify), TAdriaComm::TDataProvider(DbFNm, Notify), Notify);
+    	TAdriaComm::TDataProvider DataProvider(Notify);
+		AdriaServer = TAdriaComm::TAdriaServer::New(TAdriaComm::TAdriaCommunicator::New(HostNm, Port, Notify), DataProvider, Notify);
 
 		TLoop::Ref();
 		TLoop::Run();

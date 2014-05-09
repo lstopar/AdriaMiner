@@ -4,285 +4,202 @@ using namespace TDataAccess;
 using namespace TAdriaComm;
 
 /////////////////////////////////////////////////////////////////////
-// Data handler
-TStr TDataProvider::LogFName = "qm.log";
-int TDataProvider::SaveInterval = 1000;
+// TSampleHistThread
+//unsigned int TDataProvider::TSampleHistThread::SleepTm = 10*60*1000;
+uint64 TDataProvider::TSampleHistThread::SleepTm = 10000;
 
-TDataProvider::TDataProvider(const TStr& _DbFNm, const PNotify& _Notify):
-		DbFNm(_DbFNm),
-		DataSection(TCriticalSectionType::cstRecursive),
-		NSaves(0),
-		Notify(_Notify) {
-
-	// initialize QMiner
-//	InitQmBase();
-//	UpdateFromLog();
-
-	Notify->OnNotify(TNotifyType::ntInfo, "Data provider initialized!");
+TDataProvider::TSampleHistThread::TSampleHistThread(TDataProvider* Provider, const PNotify& _Notify):
+					DataProvider(Provider), Running(false), Notify(_Notify) {
+	Notify->OnNotify(TNotifyType::ntInfo, "SampleHistThread initialized!");
 }
 
-//void TDataProvider::InitAggregates(TQm::PBase& Base, const PNotify& Notify) {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Initializing aggregates...");
-//
-//	try {
-//		const TStr LABStoreNm = Base->GetStoreByStoreId(106)->GetStoreNm();
-//
-//		TStrPrV FieldInterpolatorPrV;
-//		FieldInterpolatorPrV.Add(TPair<TStr,TStr>("value", TSignalProc::TPreviousPoint::GetType()));
-//
-//		TQm::PStreamAggr Aggr = TQm::TStreamAggrs::TResampler::New(
-//				Base,
-//				"LABSampler",
-//				LABStoreNm,
-//				"timestamp",
-//				FieldInterpolatorPrV,
-//				"LABResampled",
-//				1000*60*30,
-//				0,
-//				false
-//		);
-//
-//		Base->AddStreamAggr(106, Aggr);
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotify(TNotifyType::ntErr, "Failed to initialize aggregates!");
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
+void TDataProvider::TSampleHistThread::Run() {
+
+	Running = true;
+	TSysProc::Sleep(SleepTm);
+
+	while (Running) {
+		DataProvider->UpdateHist();
+		TSysProc::Sleep(SleepTm);
+	}
+}
+
+/////////////////////////////////////////////////////////////////////
+// Data handler
+TStr TDataProvider::LogFName = "qm.log";
+//uint64 TDataProvider::HistDur = 1000*60*60*24*7;
+uint64 TDataProvider::HistDur = 1000*60;
+int TDataProvider::EntryTblLen = 256;
+TIntStrH TDataProvider::CanIdVarNmH;
+
+bool TDataProvider::FillCanH() {
+	CanIdVarNmH.AddDat(103, "temp_cabin");
+	CanIdVarNmH.AddDat(104, "temp_ac");
+	CanIdVarNmH.AddDat(106, "battery_ls");
+	CanIdVarNmH.AddDat(108, "fresh_water");
+	CanIdVarNmH.AddDat(122, "temp_bedroom");
+	CanIdVarNmH.AddDat(123, "hum_bedroom");
+	CanIdVarNmH.AddDat(147, "temp_ls");
+	CanIdVarNmH.AddDat(148, "hum_ls");
+	CanIdVarNmH.AddDat(159, "temp_sc");
+	CanIdVarNmH.AddDat(160, "hum_sc");
+
+	return true;
+}
+
+bool TDataProvider::Init = TDataProvider::FillCanH();
+
+
+TDataProvider::TDataProvider(const PNotify& _Notify):
+		EntryTbl(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen),
+		HistH(),
+		HistThread(),
+		DataSection(TCriticalSectionType::cstRecursive),
+		HistSection(TCriticalSectionType::cstRecursive),
+		Notify(_Notify) {
+
+	InitHist();
+	HistThread = new TSampleHistThread(this, Notify);
+	HistThread->Start();
+	Notify->OnNotify(TNotifyType::ntInfo, "Data provider initialized!");
+}
 
 void TDataProvider::AddRec(const int& CanId, const PJsonVal& Rec) {
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Adding record with CAN id: %d", CanId);
 
-	SaveRec(CanId, Rec);
-//	AddRecToLog(CanId, Rec);
-//
-//	if (++NSaves % SaveInterval == 0) {
-//		SaveBase();
-//		NSaves = 0;
-//	}
-}
-
-void TDataProvider::GetHistory(const int& CanId, TUInt64FltPrV& HistoryV) {
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Fetching history for CAN: %d", CanId);
-
-	try {
-		// TODO
-//		TLock Lock(QmSection);
-//
-//		TWPt<TStore> Store = QmBase->GetStoreByStoreId(CanId - 100);
-//
-//		const int TimeFieldId = Store->GetFieldId("timestamp");
-//		const int ValFieldId = Store->GetFieldId("value");
-//
-//		// execute the query
-//		const uint64 MaxTime = TTm::GetCurUniMSecs();				// the time is in milliseconds
-//		const uint64 MinTime = MaxTime - 1000L*60L*60L;				// current time minus one hour
-//
-//		PRecSet RecSet = Store->GetAllRecs();	// TODO optimize
-//
-//		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Found a total of %d records", RecSet->GetRecs());
-//
-//		RecSet->FilterByFieldTm(TimeFieldId, MinTime, MaxTime);
-//
-//		Notify->OnNotifyFmt(TNotifyType::ntInfo, "After filtering %d records", RecSet->GetRecs());
-//
-//		// extract the records
-//		int NRecs = RecSet->GetRecs();
-//		for (int i = 0; i < NRecs; i++) {
-//			TRec Rec = RecSet->GetRec(i);
-//
-//			uint64 Time = Rec.GetFieldUInt64(TimeFieldId);
-//			float Val = Rec.GetFieldFlt(ValFieldId);
-//
-//			HistoryV.Add(TUInt64FltPr(Time, Val));
-//		}
-	} catch (const PExcept& Except) {
-		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to retrieve history for CAN: %d", CanId);
-		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-	}
-}
-
-//void TDataProvider::InitQmBase() {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Initializing QMiner base...");
-//
-//	TLock Lock(QmSection);
-//
-//	try {
-//		QmBase = TQm::TStorage::LoadBase(QmParam.DbFPath, QmFAccess, QmParam.IndexCacheSize, QmParam.DefStoreCacheSize, QmParam.StoreNmCacheSizeH);
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotify(TNotifyType::ntInfo, "Failed to initialize QMiner, retrying using temporary DB...");
-//
-//		RestoreBackupDb();
-//
-//		QmBase = TQm::TStorage::LoadBase(
-//				QmParam.DbFPath,
-//				QmFAccess, QmParam.IndexCacheSize,
-//				QmParam.DefStoreCacheSize,
-//				QmParam.StoreNmCacheSizeH);
-//	}
-//}
-
-void TDataProvider::SaveRec(const int& CanId, const PJsonVal& Rec) {
-	Notify->OnNotify(TNotifyType::ntInfo, "Adding record to base");
-
 	try {
 		TLock Lock(DataSection);
-		// TODO
-//		if (QmBase->IsStoreId(CanId)) {
-//			uint64 RecId = QmBase->AddRec(CanId, Rec);
-//			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Added record with ID: %d", RecId);
-//		} else {
-//			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Unknown store ID: %d", CanId);
-//		}
+
+		// put the entry into the state table
+		EntryTbl[CanId] = Rec->GetObjNum("value");
+
+		AddRecToLog(CanId, Rec);
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Unable to add record to base!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
 
-//void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Adding record to log");
-//
-//	try {
-//		TLock Lock(DataSection);
-//
-//		TFOut Out(LogFName, true);
-//
-//		Out.PutStr(Rec->GetObjStr("timestamp"));
-//		Out.PutCh('\t');
-//		Out.PutInt(CanId);
-//		Out.PutCh('\t');
-//		Out.PutFlt(Rec->GetObjNum("value"));
-//		Out.PutCh('\n');
-//
-//		Out.Flush();
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotify(TNotifyType::ntErr, "Unable to add record to base!");
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
+void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
+	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Fetching history for CAN: %d", CanId);
 
-//void TDataProvider::UpdateFromLog() {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Updating base from log");
-//
-//	try {
-//		if (TFile::Exists(LogFName)) {
-//			TLock Lck(DataSection);
-//
-//			TFIn In(LogFName);
-//			TStr LineStr;
-//			while (In.GetNextLn(LineStr)) {
-//				TStrV SplitV;	LineStr.SplitOnAllCh('\t', SplitV);
-//
-//				const TStr& DateStr = SplitV[0];
-//				const int& CanId = SplitV[1].GetInt();
-//				const float Val = SplitV[2].GetFlt();
-//
-//				PJsonVal JsonVal = TJsonVal::NewObj();
-//				JsonVal->AddToObj("timestamp", DateStr);
-//				JsonVal->AddToObj("value", Val);
-//
-//				AddRecToBase(CanId, JsonVal);
-//			}
-//
-//			SaveBase();
-//		}
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to fill base with the temp log file: %s", Except->GetMsgStr().CStr());
-//	}
-//}
+	if (!HistH.IsKey(CanId)) {
+		Notify->OnNotifyFmt(TNotifyType::ntWarn, "Tried to fetch untracked history: %d. Ignoring!", CanId);
+		return;
+	}
 
-//void TDataProvider::InvalidateLog() {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Invalidating log file...");
-//
-//	try {
-//		TLock Lock(DataSection);
-//
-//		if (TFile::Exists(LogFName)) {
-//			// rename the file and create a new one
-//			const TUInt64 Time = TTm::GetCurUniMSecs();
-//			TFile::Rename(LogFName, TStr("qm-") + Time.GetStr() + ".log");
-//		}
-//
-//		TFOut Out(LogFName, false);
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotify(TNotifyType::ntErr, "Failed to invalidate the log file!");
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
-
-//void TDataProvider::SaveBase() {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Saving QMiner base...");
-//
-//	try {
-//		TLock Lock(QmSection);
-//
-//		// save the base
-//		QmBase.Clr();
-//
-//		// create a backup
-//		CopyDir(QmParam.DbFPath, GetBackupDbPath());
-//
-//		// initialize the base again
-//		InitQmBase();
-//
-//		// invalidate the active log
-//		InvalidateLog();
-//
-//		Notify->OnNotify(TNotifyType::ntInfo, "Base saved!");
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotify(TNotifyType::ntErr, "Failed to save QMiner base!");
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
+	try {
+		TLock Lck(HistSection);
+		HistoryV.AddV(HistH.GetDat(CanId));
+	} catch (const PExcept& Except) {
+		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to retrieve history for CAN: %d", CanId);
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
 
 
-//void TDataProvider::RestoreBackupDb() {
-//	Notify->OnNotify(TNotifyType::ntInfo, "Restoring backup DB...");
-//
-//	try {
-//		TLock Lock(QmSection);
-//
-//		CopyDir(GetBackupDbPath(), QmParam.DbFPath);
-//
-//		Notify->OnNotify(TNotifyType::ntInfo, "Backup DB restored!");
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotify(TNotifyType::ntErr, "Failed to restore temporary database!");
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
+void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
+	Notify->OnNotify(TNotifyType::ntInfo, "Adding record to log");
 
-//void TDataProvider::CopyDir(const TStr& Src, const TStr& Dest) {
-//	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Copying directory %s to %s", Src.CStr(), Dest.CStr());
-//
-//	namespace fs = boost::filesystem;
-//
-//	try {
-//		fs::remove_all(Dest.CStr());
-//		fs::copy_directory(Src.CStr(), Dest.CStr());
-//
-//		Notify->OnNotify(TNotifyType::ntInfo, "Directory created, copying files...");
-//
-//		fs::directory_iterator end;
-//		for (fs::directory_iterator dir_it(Src.CStr()); dir_it != end; ++dir_it) {
-//			const fs::directory_entry& dir_entry = *dir_it;
-//
-//			fs::path path = dir_entry.path();
-//
-//			TStr FPath = TStr(path.c_str());
-//			TStr DirName, FName;	FPath.SplitOnLastCh(DirName, '/', FName);
-//
-//			fs::copy_file(path, (Dest + "/" + FName).CStr());
-//		}
-//
-//	} catch (const fs::filesystem_error& Err) {
-//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to copy the dir due to a filesystem error! Code: %d, msg: %s", Err.code().value(), Err.what());
-//		throw TExcept::New(TStr(Err.what()), "TDataProvider::CopyDir");
-//	}
-//}
+	try {
+		TLock Lock(DataSection);
 
-//TStr TDataProvider::GetBackupDbPath() const {
-//	return QmParam.DbFPath.GetSubStr(0, QmParam.DbFPath.Len()-2) + "-temp/";
-//}
+		bool LogExists = TFile::Exists(LogFName);
+		TFOut Out(LogFName, true);
+
+		if (LogExists) { Out.PutCh('\n'); }
+		Out.PutStr(Rec->GetObjStr("timestamp"));
+		Out.PutCh(',');
+		Out.PutInt(CanId);
+		Out.PutCh(',');
+		Out.PutFlt(Rec->GetObjNum("value"));
+
+		Out.Flush();
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Unable to add record to base!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm) {
+	Notify->OnNotify(TNotifyType::ntInfo, "Adding state vector to history...");
+
+	try {
+		TLock Lck(HistSection);
+
+		// add the current values to history
+		TIntV KeyV;	HistH.GetKeyV(KeyV);
+
+		for (int KeyIdx = 0; KeyIdx < KeyV.Len(); KeyIdx++) {
+			const int& CanId = KeyV[KeyIdx];
+			const TFlt Val = StateV[CanId];
+			HistH.GetDat(CanId).Ins(0, TUInt64FltKd(SampleTm, Val));
+		}
+
+		// remove the outdated entries
+		for (int KeyIdx = 0; KeyIdx < KeyV.Len(); KeyIdx++) {
+			const int& CanId = KeyV[KeyIdx];
+
+			TUInt64FltKdV& HistV = HistH.GetDat(CanId);
+			while (HistV.Last().Key < SampleTm - HistDur) {
+				HistV.DelLast();
+			}
+		}
+
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to update history!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::UpdateHist() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Adding current state to history...");
+	UpdateHistFromV(EntryTbl, TTm::GetCurUniMSecs());
+}
+
+void TDataProvider::InitHist() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Initializing history...");
+
+	try {
+		TLock Lck(HistSection);
+
+		// init the history hash
+		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+		for (int i = 0; i < KeyV.Len(); i++) {
+			int CanId = KeyV[i];
+			HistH.AddDat(CanId, TUInt64FltKdV());
+		}
+
+		PSIn SIn = TFIn::New(LogFName);
+
+		TFltV StateTblTemp(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen);
+
+		uint64 CurrSampleTm = TTm::GetCurUniMSecs() - TDataProvider::HistDur;	// time of the next history entry
+
+		TStr Ln;
+		while (SIn->GetNextLn(Ln)) {
+			TStrV LineStrV;	Ln.SplitOnAllCh(',', LineStrV, true);
+
+			uint64 RecTm = TTm::GetMSecsFromTm(TTm::GetTmFromWebLogDateTimeStr(LineStrV[0], '-', ':', '.', 'T'));
+			TInt CanId = LineStrV[1].GetInt();
+			TFlt Val = LineStrV[2].GetFlt();
+
+			StateTblTemp[CanId] = Val;
+
+			if (RecTm > CurrSampleTm) {
+				// write the samples to history and set new sample time
+				UpdateHistFromV(StateTblTemp, CurrSampleTm);
+				CurrSampleTm += TDataProvider::TSampleHistThread::SleepTm;
+			}
+		}
+
+		Notify->OnNotify(TNotifyType::ntInfo, "History initialized!");
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to initialize history!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
 
 const TChA TAdriaMsg::POST = "POST";
 const TChA TAdriaMsg::PUSH = "PUSH";
@@ -606,7 +523,7 @@ void TAdriaCommunicator::AddOnMsgReceivedCallback(const PAdriaMsgCallback& Callb
 
 /////////////////////////////////////////////////////////////////////////////
 // Adria - Server
-TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, const TDataProvider& _DataProvider, const PNotify& _Notify):
+TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _DataProvider, const PNotify& _Notify):
 		DataProvider(_DataProvider),
 		Communicator(_Communicator),
 		Notify(_Notify) {
@@ -700,20 +617,20 @@ void TAdriaServer::ProcessGetHistory(const PAdriaMsg& Msg) {
 		const TStr ComponentId = Msg->GetComponentId();
 		const TInt CanId = TStr(Msg->GetParams()).GetInt();
 
-		TUInt64FltPrV HistoryV;	DataProvider.GetHistory(CanId, HistoryV);
+		TUInt64FltKdV HistoryV;	DataProvider.GetHistory(CanId, HistoryV);
 
 		int NHist = HistoryV.Len();
 
 		// content
 		TChA ContentChA = "";
 		for (int i = 0; i < NHist; i++) {
-			const TUInt64FltPr& HistEntry = HistoryV[i];
+			const TUInt64FltKd& HistEntry = HistoryV[i];
 
-			ContentChA += HistEntry.Val1.GetStr();
+			ContentChA += HistEntry.Key.GetStr();
 
 			ContentChA += ',';
 
-			ContentChA += HistEntry.Val2.GetStr();
+			ContentChA += HistEntry.Dat.GetStr();
 
 			if (i < NHist-1) {
 				ContentChA += ',';

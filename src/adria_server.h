@@ -12,43 +12,61 @@ namespace TDataAccess {
 // Backup log and backup DB handler
 class TDataProvider {
 private:
-	static int SaveInterval;
-	static TStr LogFName;
+	// A thread that periodically updates the history table
+	class TSampleHistThread: public TThread {
+	public:
+		static uint64 SleepTm;
 
-	const TStr DbFNm;
+	private:
+		TDataProvider* DataProvider;
+		bool Running;
+
+		PNotify Notify;
+
+	public:
+		TSampleHistThread(TDataProvider* Provider, const PNotify& _Notify);
+		void Run();
+		void Stop() { Running = false; }
+	};
+
+private:
+	static TStr LogFName;
+	static TIntStrH CanIdVarNmH;
+	static uint64 HistDur;
+	static int EntryTblLen;
+	static bool FillCanH();
+	static bool Init;
+
+
+	TFltV EntryTbl;
+	THash<TInt, TUInt64FltKdV> HistH;
+
+	PThread HistThread;
 
 	TCriticalSection DataSection;
-
-	int NSaves;
-
+	TCriticalSection HistSection;
 	PNotify Notify;
 
 public:
-	TDataProvider(const TStr& DbFNm, const PNotify& _Notify);
+	TDataProvider(const PNotify& _Notify);
 
-	virtual ~TDataProvider() {  }
+	virtual ~TDataProvider() { }
 
 //	static void InitAggregates(TQm::PBase& Base, const PNotify& Notify);
 public:
 	// stores a new record
 	void AddRec(const int& CanId, const PJsonVal& Rec);
 	// returns the history of the sensor with the given CAN ID
-	void GetHistory(const int& CanId, TUInt64FltPrV& HistoryV);
-
-//	PBase& GetQmBase() { return QmBase; }
+	void GetHistory(const int& CanId, TUInt64FltKdV& HistoryV);
 
 private:
-//	void InitQmBase();
+	// saves a record
 	void SaveRec(const int& CanId, const PJsonVal& Rec);
-//	void AddRecToLog(const int& CanId, const PJsonVal& Rec);
-	// fills the records in the active log file to base, saves the base and invalidates the log
-//	void UpdateFromLog();
-	// invalidates the currently active log file
-//	void InvalidateLog();
-	// synchronizes QMiners database
-//	void SaveBase();
-	// moves the backup DB into DB
-//	void RestoreBackupDb();
+	// adds a record to the external log
+	void AddRecToLog(const int& CanId, const PJsonVal& Rec);
+	void UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm);
+	void UpdateHist();
+	void InitHist();
 
 private:
 	// helpers
@@ -60,6 +78,7 @@ private:
 };
 
 }
+
 
 namespace TAdriaComm {
 
@@ -230,13 +249,13 @@ private:
 public:
 	friend class TPt<TAdriaServer>;
 private:
-	TDataProvider DataProvider;
+	TDataProvider& DataProvider;
 	PSockEvent Communicator;
 
 	PNotify Notify;
 public:
-	TAdriaServer(const PSockEvent& _Communicator, const TDataProvider& _DataProvider, const PNotify& _Notify = TStdNotify::New());
-	static PAdriaServer New(const PSockEvent& _Communicator, const TDataProvider& _DataProvider, const PNotify& _Notify = TStdNotify::New())
+	TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _DataProvider, const PNotify& _Notify = TStdNotify::New());
+	static PAdriaServer New(const PSockEvent& _Communicator, TDataProvider& _DataProvider, const PNotify& _Notify = TStdNotify::New())
 		{ return new TAdriaServer(_Communicator, _DataProvider, _Notify); }
 
 	~TAdriaServer() {}
