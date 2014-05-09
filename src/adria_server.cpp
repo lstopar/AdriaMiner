@@ -253,7 +253,9 @@ void TAdriaMsg::ReadLine(const PSIn& In, TChA& Out) const {
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Read line: %s", Out.CStr());
 }
 
-void TAdriaMsg::Read(const PSIn& SIn) {
+void TAdriaMsg::Read(const PSIn& SIn, const PNotify& Notify) {
+	Notify->OnNotify(TNotifyType::ntInfo, "Parsing method...");
+
 	// read the method
 	TChA LineBuff;	ReadLine(SIn, LineBuff);
 
@@ -270,6 +272,7 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 		throw TExcept::New(TStr("Invalid protocol method: ") + LineBuff, "TAdriaMsg::Read(const PSIn& SIn)");
 	}
 
+	Notify->OnNotify(TNotifyType::ntInfo, "Parsing command...");
 	// parse the command
 	int SpaceIdx = LineBuff.SearchCh(' ', 3);
 	// check if the line has parameters
@@ -281,20 +284,24 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 		// only the command is present
 		Command = LineBuff.GetSubStr(SpaceIdx+1, LineBuff.Len());
 	} else if (AndIdx < 0) {
+		Notify->OnNotify(TNotifyType::ntInfo, "Parsing params...");
 		// only the parameters are present
 		Command = LineBuff.GetSubStr(SpaceIdx+1, QuestionMrkIdx-1);
 		Params = LineBuff.GetSubStr(QuestionMrkIdx+1, LineBuff.Len());
 	} else if (QuestionMrkIdx < 0) {
 		// only the ID is present
+		Notify->OnNotify(TNotifyType::ntInfo, "Parsing ID...");
 		Command = LineBuff.GetSubStr(SpaceIdx+1, AndIdx-1);
 		ComponentId = LineBuff.GetSubStr(AndIdx+1, LineBuff.Len());
 	} else {
+		Notify->OnNotify(TNotifyType::ntInfo, "Parsing params and ID...");
 		// both the parameters and the ID are present
 		Command = LineBuff.GetSubStr(SpaceIdx+1, QuestionMrkIdx-1);
 		Params = LineBuff.GetSubStr(QuestionMrkIdx+1, AndIdx-1);
 		ComponentId = LineBuff.GetSubStr(AndIdx+1, LineBuff.Len());
 	}
 
+	Notify->OnNotify(TNotifyType::ntInfo, "Parsing content...");
 	if (HasContent()) {
 		// parse the length
 		LineBuff.Clr();
