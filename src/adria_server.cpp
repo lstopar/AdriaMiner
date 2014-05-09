@@ -233,13 +233,17 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 	char* Buff = new char[BuffLen];
 
 	bool DelReached = false;
-	while (!DelReached) {
+	while (!DelReached && !In->Eof()) {
 		char Ch = In->GetCh();
 
 		Out += Ch;
 
 		Notify->OnNotify(TNotifyType::ntInfo, "Shifting buff...");
-		strcpy(Buff, Buff+1);
+		for (int i = 0; i < BuffLen-1; i++) {
+			Buff[i] = Buff[i+1];
+		}
+//		strcpy(Buff, Buff+1);	// TODO risky!!!!
+		Notify->OnNotify(TNotifyType::ntInfo, "Inserting char to buff...");
 		Buff[BuffLen - 1] = Ch;
 
 
