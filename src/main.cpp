@@ -51,8 +51,8 @@ void RegSigHandlers(const PNotify& Notify) {
 void BuildUnicode() {
 	printf("Building unicode DB...\n");
 	TUniChDb ChDb;
-	ChDb.LoadTxt("/home/lstopar/workspace/JSI/qminer/glib/bin/UnicodeDefTxt");
-	ChDb.SaveBin("/home/lstopar/workspace/JSI/qminer/UnicodeDef.Bin");
+	ChDb.LoadTxt("/home/pi/adria/miner/glib/bin/UnicodeDefTxt");
+	ChDb.SaveBin("/home/pi/UnicodeDef.Bin");
 	printf("Unicode complete!\n");
 }
 
@@ -64,8 +64,9 @@ int main(int argc, char* argv[]) {
     setbuf(stdout, NULL);
 #endif    
     try {
-    	TStr HostNm = "95.87.154.134";
-//    	TStr HostNm = "127.0.0.1";
+//	BuildUnicode();
+//    	TStr HostNm = "95.87.154.134";
+    	TStr HostNm = "127.0.0.1";
     	int Port = 9999;
 
     	// start server
