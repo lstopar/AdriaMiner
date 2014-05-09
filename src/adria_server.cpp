@@ -230,7 +230,7 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 	int BuffLen = EndStr.Len();
 
 	const char* Target = EndStr.CStr();
-	char* Buff = new char[EndStr.Len()];
+	char* Buff = new char[BuffLen];
 
 	bool DelReached = false;
 	while (!DelReached) {
@@ -238,11 +238,16 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 
 		Out += Ch;
 
+		Notify->OnNotify(TNotifyType::ntInfo, "Shifting buff...");
 		strcpy(Buff, Buff+1);
 		Buff[BuffLen - 1] = Ch;
 
+
+		Notify->OnNotify(TNotifyType::ntInfo, "comparing strings...");
 		DelReached = strcmp(Buff, Target) == 0;
 	}
+
+	Notify->OnNotify(TNotifyType::ntInfo, "Deleting buff...");
 
 	delete Buff;
 }
