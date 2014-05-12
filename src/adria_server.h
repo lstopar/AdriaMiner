@@ -8,6 +8,12 @@
 
 namespace TDataAccess {
 
+class TPredictionCallback {
+public:
+	virtual void OnPrediction(const TInt& CanId, const TFlt& Val) = 0;
+	virtual ~TPredictionCallback() {}
+};
+
 /////////////////////////////////////////////////////////////////////
 // Backup log and backup DB handler
 class TDataProvider {
@@ -32,9 +38,10 @@ private:
 private:
 	static TStr LogFName;
 	static TIntStrH CanIdVarNmH;
+	static TIntSet PredCanSet;
 	static uint64 HistDur;
 	static int EntryTblLen;
-	static bool FillCanH();
+	static bool FillCanHs();
 	static bool Init;
 
 
@@ -42,6 +49,7 @@ private:
 	THash<TInt, TUInt64FltKdV> HistH;
 
 	PThread HistThread;
+	TPredictionCallback* PredictionCallback;
 
 	TCriticalSection DataSection;
 	TCriticalSection HistSection;
@@ -58,6 +66,10 @@ public:
 	void AddRec(const int& CanId, const PJsonVal& Rec);
 	// returns the history of the sensor with the given CAN ID
 	void GetHistory(const int& CanId, TUInt64FltKdV& HistoryV);
+	// makes a prediction for the desired CAN ID and fires an event
+	void PredictByCan(const int& CanId);
+
+	void SetPredictionCallback(TPredictionCallback* Callback) { PredictionCallback = Callback; }
 
 private:
 	// saves a record
@@ -66,6 +78,7 @@ private:
 	void AddRecToLog(const int& CanId, const PJsonVal& Rec);
 	void UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm);
 	void UpdateHist();
+	void MakePredictions();
 	void InitHist();
 
 private:
@@ -108,6 +121,7 @@ public:
 
 	const static TChA RES_TABLE;
 	const static TChA HISTORY;
+	const static TChA PREDICTION;
 	const static int BYTES_PER_EL;
 
 private:
@@ -152,12 +166,14 @@ private:
 	void ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const;
 	void ReadLine(const PSIn& In, TChA& Out) const;
 
+public:
 	bool HasMethod() const { return Method != TAdriaMsgMethod::ammNone; }
 	bool HasCommand() const { return !Command.Empty(); }
 	bool HasComponentId() const { return !ComponentId.Empty(); }
 	bool HasParams() const { return !Params.Empty(); }
 	bool HasContent() const { return IsPush() || IsPost(); }
 
+private:
 	bool IsMethod(const TAdriaMsgMethod& Mtd) const { return Method == Mtd; }
 
 	static bool BuffsEq(const char* Buff1, const char* Buff2, const int& BuffLen);
@@ -245,7 +261,7 @@ private:
 
 class TAdriaServer;
 typedef TPt<TAdriaServer> PAdriaServer;
-class TAdriaServer: public TAdriaMsgCallback {
+class TAdriaServer: public TAdriaMsgCallback, public TPredictionCallback {
 private:
 	TCRef CRef;
 public:
@@ -264,6 +280,7 @@ public:
 
 public:
 	void OnMsgReceived(const PAdriaMsg& Msg);
+	void OnPrediction(const TInt& CanId, const TFlt& Val);
 
 	void ShutDown();
 
@@ -271,6 +288,7 @@ private:
 	void ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH);
 	void ProcessPushTable(const PAdriaMsg& Msg);
 	void ProcessGetHistory(const PAdriaMsg& Msg);
+	void ProcessGetPrediction(const PAdriaMsg& Msg);
 };
 
 

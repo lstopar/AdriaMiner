@@ -20,6 +20,7 @@ void TDataProvider::TSampleHistThread::Run() {
 
 	while (Running) {
 		DataProvider->UpdateHist();
+		DataProvider->MakePredictions();
 		TSysProc::Sleep(SleepTm);
 	}
 }
@@ -28,11 +29,12 @@ void TDataProvider::TSampleHistThread::Run() {
 // Data handler
 TStr TDataProvider::LogFName = "qm.log";
 //uint64 TDataProvider::HistDur = 1000*60*60*24*7;
-uint64 TDataProvider::HistDur = 1000*60;
+uint64 TDataProvider::HistDur = 1000*60*10;
 int TDataProvider::EntryTblLen = 256;
 TIntStrH TDataProvider::CanIdVarNmH;
+TIntSet TDataProvider::PredCanSet;
 
-bool TDataProvider::FillCanH() {
+bool TDataProvider::FillCanHs() {
 	CanIdVarNmH.AddDat(103, "temp_cabin");
 	CanIdVarNmH.AddDat(104, "temp_ac");
 	CanIdVarNmH.AddDat(106, "battery_ls");
@@ -44,10 +46,12 @@ bool TDataProvider::FillCanH() {
 	CanIdVarNmH.AddDat(159, "temp_sc");
 	CanIdVarNmH.AddDat(160, "hum_sc");
 
+	PredCanSet.AddKey(108);
+
 	return true;
 }
 
-bool TDataProvider::Init = TDataProvider::FillCanH();
+bool TDataProvider::Init = TDataProvider::FillCanHs();
 
 
 TDataProvider::TDataProvider(const PNotify& _Notify):
@@ -93,6 +97,44 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 		HistoryV.AddV(HistH.GetDat(CanId));
 	} catch (const PExcept& Except) {
 		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to retrieve history for CAN: %d", CanId);
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PredictByCan(const int& CanId) {
+	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Making prediction for CAN: %d", CanId);
+
+	try {
+		TUInt64FltKdV HistV;	GetHistory(CanId, HistV);
+
+		double DValSum = 0.0;
+		double DtSum = 0.0;
+		int DropCount = 0;
+
+		TUInt64FltKd* PrevTmValKd = NULL;
+		const int NHist = HistV.Len();
+		for (int i = NHist-1; i >= 0; i--) {
+			TUInt64FltKd* CurrTmValKd = &HistV[i];
+
+			if (PrevTmValKd != NULL && CurrTmValKd->Dat <= PrevTmValKd->Dat * 1.05 /* threshold */) {
+				double Dt = double(CurrTmValKd->Key - PrevTmValKd->Key) / (1000*60*60);	// dt in hours
+				double DVal = CurrTmValKd->Dat - PrevTmValKd->Dat;
+
+				DValSum += DVal;
+				DtSum += Dt;
+				DropCount++;
+			}
+
+			PrevTmValKd = CurrTmValKd;
+		}
+
+		double DValAvg = DValSum / DtSum;
+		double CurrVal = EntryTbl[CanId];
+
+		double HoursLeft = -CurrVal / DValAvg;
+		PredictionCallback->OnPrediction(CanId, HoursLeft);
+	} catch (const PExcept& Except) {
+		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to make a prediction for CAN: %d", CanId);
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -157,6 +199,20 @@ void TDataProvider::UpdateHist() {
 	UpdateHistFromV(EntryTbl, TTm::GetCurUniMSecs());
 }
 
+void TDataProvider::MakePredictions() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Making predictions and distributing...");
+
+	try {
+		int CurrKeyId = PredCanSet.FFirstKeyId();
+		while (PredCanSet.FNextKeyId(CurrKeyId)) {
+			PredictByCan(PredCanSet[CurrKeyId]);
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to make predictions!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
 void TDataProvider::InitHist() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Initializing history...");
 
@@ -207,6 +263,7 @@ const TChA TAdriaMsg::GET = "GET";
 
 const TChA TAdriaMsg::RES_TABLE = "res_table";
 const TChA TAdriaMsg::HISTORY = "history";
+const TChA TAdriaMsg::PREDICTION = "prediction";
 
 const int TAdriaMsg::BYTES_PER_EL = 6;
 
@@ -387,7 +444,8 @@ void TAdriaCommunicator::OnConnect(const uint64& SockId) {
 	// compose adria protocol initialization request
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Connected socket: %lu, writing desired inputs...", SockId);
 
-	Write("PUSH res_table|GET history&qminer,qm1\r\n");
+	Write("PUSH res_table|GET history,prediction&qminer,qm1\r\n");
+	Write("GET res_table\r\n");										// refresh the table
 }
 
 void TAdriaCommunicator::OnRead(const uint64& SockId, const PSIn& SIn) {
@@ -544,6 +602,7 @@ TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _Data
 		Notify(_Notify) {
 
 	((TAdriaCommunicator*) Communicator())->AddOnMsgReceivedCallback(this);
+	DataProvider.SetPredictionCallback(this);
 }
 
 void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
@@ -554,11 +613,28 @@ void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
 			ProcessPushTable(Msg);
 		} else if (Msg->IsGet() && Msg->GetCommand() == TAdriaMsg::HISTORY) {
 			ProcessGetHistory(Msg);
+		} else if (Msg->IsGet() && Msg->GetCommand() == TAdriaMsg::PREDICTION && Msg->HasParams()) {
+			ProcessGetPrediction(Msg);
 		} else {
 			Notify->OnNotifyFmt(TNotifyType::ntWarn, "Invalid message: %s", Msg->GetStr().CStr());
 		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process the received message!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TAdriaServer::OnPrediction(const TInt& CanId, const TFlt& Val) {
+	try {
+		TStr ValStr = Val.GetStr();
+
+		TChA Msg = "PUSH prediction?" + CanId.GetStr() +
+				"\r\nLength=" + TInt(ValStr.Len()).GetStr() +
+				"\r\n" + ValStr + "\r\n";
+
+		((TAdriaCommunicator*) Communicator())->Write(Msg);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to process prediction callback!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -675,6 +751,16 @@ void TAdriaServer::ProcessGetHistory(const PAdriaMsg& Msg) {
 		((TAdriaCommunicator*) Communicator())->Write(Msg);
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process GET history!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TAdriaServer::ProcessGetPrediction(const PAdriaMsg& Msg) {
+	try {
+		const TInt CanId = TStr(Msg->GetParams()).GetInt();
+		DataProvider.PredictByCan(CanId);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to process GET prediction!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
