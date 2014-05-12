@@ -159,6 +159,8 @@ private:
 	bool HasContent() const { return IsPush() || IsPost(); }
 
 	bool IsMethod(const TAdriaMsgMethod& Mtd) const { return Method == Mtd; }
+
+	static bool BuffsEq(const char* Buff1, const char* Buff2, const int& BuffLen);
 };
 
 class TAdriaMsgCallback;

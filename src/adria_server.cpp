@@ -232,32 +232,19 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 	const char* Target = EndStr.CStr();
 	char* Buff = new char[BuffLen];
 
-	bool DelReached = false;
-	while (!DelReached && !In->Eof()) {
+	while (!In->Eof()) {
 		char Ch = In->GetCh();
 
 		Out += Ch;
 
 		// shift buffer
-		Notify->OnNotify(TNotifyType::ntInfo, "Shifting buff...");
 		for (int i = 0; i < BuffLen-1; i++) { Buff[i] = Buff[i+1]; }
-		Notify->OnNotify(TNotifyType::ntInfo, "Inserting char to buff...");
 		Buff[BuffLen - 1] = Ch;
 
-
-		Notify->OnNotify(TNotifyType::ntInfo, "comparing strings...");
 		// check if the delimiter was reached
-		DelReached = true;
-		for (int i = 0; i < BuffLen; i++) {
-			if (Buff[i] != Target[i]) {
-				DelReached = false;
-				break;
-			}
-		}
-//		DelReached = strcmp(Buff, Target) == 0;	// TODO risky!!!
+		if (TAdriaMsg::BuffsEq(Buff, Target, BuffLen))
+			break;
 	}
-
-	Notify->OnNotify(TNotifyType::ntInfo, "Deleting buff...");
 
 	delete Buff;
 }
@@ -690,4 +677,12 @@ void TAdriaServer::ProcessGetHistory(const PAdriaMsg& Msg) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process GET history!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
+}
+
+bool TAdriaMsg::BuffsEq(const char* Buff1, const char* Buff2, const int& BuffLen) {
+	for (int i = 0; i < BuffLen; i++) {
+		if (Buff1[i] != Buff2[i])
+			return false;
+	}
+	return true;
 }
