@@ -227,7 +227,7 @@ bool TAdriaMsg::IsComplete() const {
 }
 
 void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
-	int BuffLen = EndStr.Len();
+	const int BuffLen = EndStr.Len();
 
 	const char* Target = EndStr.CStr();
 	char* Buff = new char[BuffLen];
@@ -238,17 +238,23 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 
 		Out += Ch;
 
+		// shift buffer
 		Notify->OnNotify(TNotifyType::ntInfo, "Shifting buff...");
-		for (int i = 0; i < BuffLen-1; i++) {
-			Buff[i] = Buff[i+1];
-		}
-//		strcpy(Buff, Buff+1);	// TODO risky!!!!
+		for (int i = 0; i < BuffLen-1; i++) { Buff[i] = Buff[i+1]; }
 		Notify->OnNotify(TNotifyType::ntInfo, "Inserting char to buff...");
 		Buff[BuffLen - 1] = Ch;
 
 
 		Notify->OnNotify(TNotifyType::ntInfo, "comparing strings...");
-		DelReached = strcmp(Buff, Target) == 0;
+		// check if the delimiter was reached
+		DelReached = true;
+		for (int i = 0; i < BuffLen; i++) {
+			if (Buff[i] != Target[i]) {
+				DelReached = false;
+				break;
+			}
+		}
+//		DelReached = strcmp(Buff, Target) == 0;	// TODO risky!!!
 	}
 
 	Notify->OnNotify(TNotifyType::ntInfo, "Deleting buff...");

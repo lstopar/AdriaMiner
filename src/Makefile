@@ -17,8 +17,6 @@ GLIB_MISC = $(GLIB)/misc/
 GLIB_THREAD = $(GLIB)/concurrent/
 #BOOST = ../../boost/
 
-#INCLUDE = -I. -I$(BOOST) -I$(GLIB_BASE) -I$(GLIB_NET) -I$(GLIB_MINE) -I$(GLIB_MISC) -I$(GLIB_THREAD) -I$(LIBUV) -I$(LIBV8) -I$(QMINER)/src
-
 INCLUDE = -I. -I$(GLIB_BASE) -I$(GLIB_NET) -I$(GLIB_MINE) -I$(GLIB_MISC) -I$(GLIB_THREAD) -I$(LIBUV)
 
 # main object files
