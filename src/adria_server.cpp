@@ -476,7 +476,7 @@ void TAdriaCommunicator::OnGetHost(const PSockHost& SockHost) {
 
 		Notify->OnNotify(TNotifyType::ntInfo, "Socket created!");
 	} else {
-		Notify->OnNotify(TNotifyType::ntErr, "Failed to connect to host!");
+		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to connect to host %s: %s!", SockHost->GetHostNm().CStr(), SockHost->GetErrMsg().CStr());
 	}
 }
 
