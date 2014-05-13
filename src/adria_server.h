@@ -36,7 +36,6 @@ private:
 	};
 
 private:
-	static TStr LogFName;
 	static TIntStrH CanIdVarNmH;
 	static TIntSet PredCanSet;
 	static uint64 HistDur;
@@ -44,7 +43,7 @@ private:
 	static bool FillCanHs();
 	static bool Init;
 
-
+	TStr DbPath;
 	TFltV EntryTbl;
 	THash<TInt, TUInt64FltKdV> HistH;
 
@@ -56,7 +55,7 @@ private:
 	PNotify Notify;
 
 public:
-	TDataProvider(const PNotify& _Notify);
+	TDataProvider(const TStr& DbPath, const PNotify& _Notify);
 
 	virtual ~TDataProvider() { }
 
@@ -80,14 +79,18 @@ private:
 	void UpdateHist();
 	void MakePredictions();
 	void InitHist();
+	void LoadHistForCan(const TInt& CanId);
+	void PersistHist();
+	void PersistHistForCan(const TInt& CanId);
 
 private:
 	// helpers
 	// removes directory Dest and copies Src into it
 	void CopyDir(const TStr& Src, const TStr& Dest);
 
-	// returns the name of the backup databases directory
-	TStr GetBackupDbPath() const;
+	TStr GetLogFName() { return DbPath + "/readings.log"; }
+	TStr GetHistFName(const TInt& CanId) { return DbPath + "/" + CanId.GetStr() + ".bin"; }
+	TStr GetHistBackupFName(const TInt& CanId) { return DbPath + "/" + CanId.GetStr() + "-backup.bin"; }
 };
 
 }

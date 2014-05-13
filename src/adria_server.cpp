@@ -27,7 +27,6 @@ void TDataProvider::TSampleHistThread::Run() {
 
 /////////////////////////////////////////////////////////////////////
 // Data handler
-TStr TDataProvider::LogFName = "qm.log";
 //uint64 TDataProvider::HistDur = 1000*60*60*24*7;
 uint64 TDataProvider::HistDur = 1000*60*10;
 int TDataProvider::EntryTblLen = 256;
@@ -54,7 +53,8 @@ bool TDataProvider::FillCanHs() {
 bool TDataProvider::Init = TDataProvider::FillCanHs();
 
 
-TDataProvider::TDataProvider(const PNotify& _Notify):
+TDataProvider::TDataProvider(const TStr& _DbPath, const PNotify& _Notify):
+		DbPath(_DbPath),
 		EntryTbl(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen),
 		HistH(),
 		HistThread(),
@@ -146,6 +146,8 @@ void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
 	try {
 		TLock Lock(DataSection);
 
+		const TStr LogFName = GetLogFName();
+
 		bool LogExists = TFile::Exists(LogFName);
 		TFOut Out(LogFName, true);
 
@@ -197,6 +199,7 @@ void TDataProvider::UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm)
 void TDataProvider::UpdateHist() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Adding current state to history...");
 	UpdateHistFromV(EntryTbl, TTm::GetCurUniMSecs());
+	PersistHist();
 }
 
 void TDataProvider::MakePredictions() {
@@ -219,39 +222,148 @@ void TDataProvider::InitHist() {
 	try {
 		TLock Lck(HistSection);
 
-		// init the history hash
+		// get CAN IDs
 		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+
 		for (int i = 0; i < KeyV.Len(); i++) {
-			int CanId = KeyV[i];
-			HistH.AddDat(CanId, TUInt64FltKdV());
+			const TInt& CanId = KeyV[i];
+			LoadHistForCan(CanId);
 		}
 
-		PSIn SIn = TFIn::New(LogFName);
 
-		TFltV StateTblTemp(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen);
-
-		uint64 CurrSampleTm = TTm::GetCurUniMSecs() - TDataProvider::HistDur;	// time of the next history entry
-
-		TStr Ln;
-		while (SIn->GetNextLn(Ln)) {
-			TStrV LineStrV;	Ln.SplitOnAllCh(',', LineStrV, true);
-
-			uint64 RecTm = TTm::GetMSecsFromTm(TTm::GetTmFromWebLogDateTimeStr(LineStrV[0], '-', ':', '.', 'T'));
-			TInt CanId = LineStrV[1].GetInt();
-			TFlt Val = LineStrV[2].GetFlt();
-
-			StateTblTemp[CanId] = Val;
-
-			if (RecTm > CurrSampleTm) {
-				// write the samples to history and set new sample time
-				UpdateHistFromV(StateTblTemp, CurrSampleTm);
-				CurrSampleTm += TDataProvider::TSampleHistThread::SleepTm;
-			}
-		}
+//		// init the history hash
+//		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+//		for (int i = 0; i < KeyV.Len(); i++) {
+//			int CanId = KeyV[i];
+//			HistH.AddDat(CanId, TUInt64FltKdV());
+//		}
+//
+//		PSIn SIn = TFIn::New(GetLogFName());
+//
+//		TFltV StateTblTemp(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen);
+//
+//		uint64 CurrSampleTm = TTm::GetCurUniMSecs() - TDataProvider::HistDur;	// time of the next history entry
+//
+//		TStr Ln;
+//		while (SIn->GetNextLn(Ln)) {
+//			TStrV LineStrV;	Ln.SplitOnAllCh(',', LineStrV, true);
+//
+//			uint64 RecTm = TTm::GetMSecsFromTm(TTm::GetTmFromWebLogDateTimeStr(LineStrV[0], '-', ':', '.', 'T'));
+//			TInt CanId = LineStrV[1].GetInt();
+//			TFlt Val = LineStrV[2].GetFlt();
+//
+//			StateTblTemp[CanId] = Val;
+//
+//			if (RecTm > CurrSampleTm) {
+//				// write the samples to history and set new sample time
+//				UpdateHistFromV(StateTblTemp, CurrSampleTm);
+//				CurrSampleTm += TDataProvider::TSampleHistThread::SleepTm;
+//			}
+//		}
 
 		Notify->OnNotify(TNotifyType::ntInfo, "History initialized!");
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to initialize history!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::LoadHistForCan(const TInt& CanId) {
+	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Loading history for CAN: %d", CanId.Val);
+
+	try {
+		TLock Lck(HistSection);
+
+		const TStr HistFName = GetHistFName(CanId);
+		const TStr BackupFName = GetHistBackupFName(CanId);
+
+		bool Success = false;
+
+		if (TFile::Exists(HistFName)) {
+			try {
+				TFIn SIn(HistFName);
+
+				TUInt64FltKdV HistV(SIn);
+				HistH.AddDat(CanId, HistV);
+				Success = true;
+			} catch (const PExcept& Except) {
+				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading history for CAN: %d", CanId.Val);
+				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+			}
+		}
+		if (!Success && TFile::Exists(BackupFName)) {
+			try {
+				TFIn SIn(BackupFName);
+
+				TUInt64FltKdV HistV(SIn);
+				HistH.AddDat(CanId, HistV);
+				Success = true;
+			} catch (const PExcept& Except) {
+				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading backup history for CAN: %d", CanId.Val);
+				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+			}
+		}
+		if (!Success) {
+			Notify->OnNotify(TNotifyType::ntInfo, "History doesn't exist or is corrupt! Creating new history vector...");
+			TUInt64FltKdV HistV;
+			HistH.AddDat(CanId, HistV);
+
+			PersistHistForCan(CanId);
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to read history for CAN: %d", CanId.Val);
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PersistHist() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Persisting history...");
+
+	try {
+		TLock Lock(HistSection);
+
+		// get CAN IDs
+		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+
+		// go through all CAN IDs and persist their history vectors
+		for (int i = 0; i < KeyV.Len(); i++) {
+			const TInt& CanId = KeyV[i];
+			PersistHistForCan(CanId);
+		}
+
+		Notify->OnNotify(TNotifyType::ntInfo, "History persisted!");
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to persist history!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PersistHistForCan(const TInt& CanId) {
+	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Persisting history for CAN: %d...", CanId.Val);
+
+	try {
+		TLock Lck(HistSection);
+
+		const TStr HistFName = GetHistFName(CanId);
+		const TStr BackupFName = GetHistBackupFName(CanId);
+
+		// first remove the backup file
+		if (TFile::Exists(BackupFName)) {
+			TFile::Del(BackupFName);
+		}
+
+		// rename the current hist file to backup
+		if (TFile::Exists(HistFName)) {
+			TFile::Rename(HistFName, BackupFName);
+		}
+
+		// save a new hist file
+		TUInt64FltKdV& HistV = HistH.GetDat(CanId);
+
+		TFOut Out(HistFName);
+		HistV.Save(Out);
+	} catch (const PExcept& Except) {
+		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to persist historyfor CAN: %d!", CanId);
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }

@@ -36,11 +36,12 @@ int main(int argc, char* argv[]) {
 
 		const int PortN = Env.GetIfArgPrefixInt("-port=", 8080, "Port number");
 		const TStr HostNm = Env.GetIfArgPrefixStr("-host=", "127.0.0.1", "Host");
+		const TStr DbPath = Env.GetIfArgPrefixStr("-db=", "./db/", "DB folder");
 
     	// start server
     	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Starting socket client, host: %s, port %d", HostNm.CStr(), PortN);
 
-    	TAdriaComm::TDataProvider DataProvider(Notify);
+    	TAdriaComm::TDataProvider DataProvider(DbPath, Notify);
 		AdriaServer = TAdriaComm::TAdriaServer::New(TAdriaComm::TAdriaCommunicator::New(HostNm, PortN, Notify), DataProvider, Notify);
 
 		TLoop::Ref();
