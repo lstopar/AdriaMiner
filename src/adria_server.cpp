@@ -6,7 +6,7 @@ using namespace TAdriaComm;
 /////////////////////////////////////////////////////////////////////
 // TSampleHistThread
 //unsigned int TDataProvider::TSampleHistThread::SleepTm = 10*60*1000;
-uint64 TDataProvider::TSampleHistThread::SleepTm = 10000;
+uint64 TDataProvider::TSampleHistThread::SleepTm = 1000*60*10;
 
 TDataProvider::TSampleHistThread::TSampleHistThread(TDataProvider* Provider, const PNotify& _Notify):
 					DataProvider(Provider), Running(false), Notify(_Notify) {
@@ -27,8 +27,8 @@ void TDataProvider::TSampleHistThread::Run() {
 
 /////////////////////////////////////////////////////////////////////
 // Data handler
-//uint64 TDataProvider::HistDur = 1000*60*60*24*7;
-uint64 TDataProvider::HistDur = 1000*60*10;
+uint64 TDataProvider::HistDur = 1000*60*60*24*7;
+//uint64 TDataProvider::HistDur = 1000*60*10;
 int TDataProvider::EntryTblLen = 256;
 TIntStrH TDataProvider::CanIdVarNmH;
 TIntSet TDataProvider::PredCanSet;
@@ -69,8 +69,6 @@ TDataProvider::TDataProvider(const TStr& _DbPath, const PNotify& _Notify):
 }
 
 void TDataProvider::AddRec(const int& CanId, const PJsonVal& Rec) {
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Adding record with CAN id: %d", CanId);
-
 	try {
 		TLock Lock(DataSection);
 
@@ -102,8 +100,6 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 }
 
 void TDataProvider::PredictByCan(const int& CanId) {
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Making prediction for CAN: %d", CanId);
-
 	try {
 		TUInt64FltKdV HistV;	GetHistory(CanId, HistV);
 
@@ -141,8 +137,6 @@ void TDataProvider::PredictByCan(const int& CanId) {
 
 
 void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
-	Notify->OnNotify(TNotifyType::ntInfo, "Adding record to log");
-
 	try {
 		TLock Lock(DataSection);
 
@@ -166,8 +160,6 @@ void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
 }
 
 void TDataProvider::UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm) {
-	Notify->OnNotify(TNotifyType::ntInfo, "Adding state vector to history...");
-
 	try {
 		TLock Lck(HistSection);
 
@@ -229,37 +221,6 @@ void TDataProvider::InitHist() {
 			const TInt& CanId = KeyV[i];
 			LoadHistForCan(CanId);
 		}
-
-
-//		// init the history hash
-//		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
-//		for (int i = 0; i < KeyV.Len(); i++) {
-//			int CanId = KeyV[i];
-//			HistH.AddDat(CanId, TUInt64FltKdV());
-//		}
-//
-//		PSIn SIn = TFIn::New(GetLogFName());
-//
-//		TFltV StateTblTemp(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen);
-//
-//		uint64 CurrSampleTm = TTm::GetCurUniMSecs() - TDataProvider::HistDur;	// time of the next history entry
-//
-//		TStr Ln;
-//		while (SIn->GetNextLn(Ln)) {
-//			TStrV LineStrV;	Ln.SplitOnAllCh(',', LineStrV, true);
-//
-//			uint64 RecTm = TTm::GetMSecsFromTm(TTm::GetTmFromWebLogDateTimeStr(LineStrV[0], '-', ':', '.', 'T'));
-//			TInt CanId = LineStrV[1].GetInt();
-//			TFlt Val = LineStrV[2].GetFlt();
-//
-//			StateTblTemp[CanId] = Val;
-//
-//			if (RecTm > CurrSampleTm) {
-//				// write the samples to history and set new sample time
-//				UpdateHistFromV(StateTblTemp, CurrSampleTm);
-//				CurrSampleTm += TDataProvider::TSampleHistThread::SleepTm;
-//			}
-//		}
 
 		Notify->OnNotify(TNotifyType::ntInfo, "History initialized!");
 	} catch (const PExcept& Except) {
@@ -339,8 +300,6 @@ void TDataProvider::PersistHist() {
 }
 
 void TDataProvider::PersistHistForCan(const TInt& CanId) {
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Persisting history for CAN: %d...", CanId.Val);
-
 	try {
 		TLock Lck(HistSection);
 
@@ -419,22 +378,13 @@ void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
 }
 
 void TAdriaMsg::ReadLine(const PSIn& In, TChA& Out) const {
-	Notify->OnNotify(TNotifyType::ntInfo, "Reading line...");
-
 	ReadUntil(In, "\r\n", Out);
-
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Read line: %s", Out.CStr());
 }
 
 void TAdriaMsg::Read(const PSIn& SIn) {
-	Notify->OnNotify(TNotifyType::ntInfo, "Parsing method...");
-
 	// read the method
 	TChA LineBuff;
-	Notify->OnNotify(TNotifyType::ntInfo, "Created line buff...");
 	ReadLine(SIn, LineBuff);
-
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Received line with length: %d, deleting last two characters...", LineBuff.Len());
 
 	// ignore the EOL
 	LineBuff.DelLastCh();	LineBuff.DelLastCh();
@@ -449,7 +399,6 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 		throw TExcept::New(TStr("Invalid protocol method: ") + LineBuff, "TAdriaMsg::Read(const PSIn& SIn)");
 	}
 
-	Notify->OnNotify(TNotifyType::ntInfo, "Parsing command...");
 	// parse the command
 	int SpaceIdx = LineBuff.SearchCh(' ', 3);
 	// check if the line has parameters
@@ -461,24 +410,20 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 		// only the command is present
 		Command = LineBuff.GetSubStr(SpaceIdx+1, LineBuff.Len());
 	} else if (AndIdx < 0) {
-		Notify->OnNotify(TNotifyType::ntInfo, "Parsing params...");
 		// only the parameters are present
 		Command = LineBuff.GetSubStr(SpaceIdx+1, QuestionMrkIdx-1);
 		Params = LineBuff.GetSubStr(QuestionMrkIdx+1, LineBuff.Len());
 	} else if (QuestionMrkIdx < 0) {
 		// only the ID is present
-		Notify->OnNotify(TNotifyType::ntInfo, "Parsing ID...");
 		Command = LineBuff.GetSubStr(SpaceIdx+1, AndIdx-1);
 		ComponentId = LineBuff.GetSubStr(AndIdx+1, LineBuff.Len());
 	} else {
-		Notify->OnNotify(TNotifyType::ntInfo, "Parsing params and ID...");
 		// both the parameters and the ID are present
 		Command = LineBuff.GetSubStr(SpaceIdx+1, QuestionMrkIdx-1);
 		Params = LineBuff.GetSubStr(QuestionMrkIdx+1, AndIdx-1);
 		ComponentId = LineBuff.GetSubStr(AndIdx+1, LineBuff.Len());
 	}
 
-	Notify->OnNotify(TNotifyType::ntInfo, "Parsing content...");
 	if (HasContent()) {
 		// parse the length
 		LineBuff.Clr();
@@ -497,8 +442,6 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 		// newline at the end
 		SIn->GetCh();	SIn->GetCh();
 	}
-
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Read: %s", GetStr().CStr());
 }
 
 TStr TAdriaMsg::GetStr() const {
@@ -564,7 +507,6 @@ void TAdriaCommunicator::OnRead(const uint64& SockId, const PSIn& SIn) {
 	try {
 		TLock Lock(SocketSection);
 
-		Notify->OnNotify(TNotifyType::ntInfo, "OnRead...");
 		// parse the protocol
 		CurrMsg->Read(SIn);
 
@@ -641,8 +583,6 @@ bool TAdriaCommunicator::Write(const PSIn& SIn) {
 }
 
 bool TAdriaCommunicator::Write(const TChA& Msg) {
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Writing: %s", Msg.CStr());
-
 	return Write(TMIn::New(Msg));
 }
 
@@ -719,8 +659,6 @@ TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _Data
 
 void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
 	try {
-		Notify->OnNotify(TNotifyType::ntInfo, "Received message in callback...");
-
 		if (Msg->IsPush() && Msg->GetCommand() == TAdriaMsg::RES_TABLE) {
 			ProcessPushTable(Msg);
 		} else if (Msg->IsGet() && Msg->GetCommand() == TAdriaMsg::HISTORY) {
@@ -756,8 +694,6 @@ void TAdriaServer::ShutDown() {
 }
 
 void TAdriaServer::ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH) {
-	Notify->OnNotify(TNotifyType::ntInfo, "Parsing CAN table...");
-
 	int NEntries = Table.Len() / TAdriaMsg::BYTES_PER_EL;
 
 	int StartIdx;
@@ -806,8 +742,6 @@ void TAdriaServer::ProcessPushTable(const PAdriaMsg& Msg) {
 			RecJson->AddToObj("value", Val);
 
 			DataProvider.AddRec(CanId, RecJson);
-
-			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Added record: (%d,%s)\n", CanId.Val, Val.GetStr().CStr());
 		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process PUSH res_table!");
@@ -816,6 +750,8 @@ void TAdriaServer::ProcessPushTable(const PAdriaMsg& Msg) {
 }
 
 void TAdriaServer::ProcessGetHistory(const PAdriaMsg& Msg) {
+	Notify->OnNotify(TNotifyType::ntInfo, "Received history request...");
+
 	try {
 		const TStr ComponentId = Msg->GetComponentId();
 		const TInt CanId = TStr(Msg->GetParams()).GetInt();
