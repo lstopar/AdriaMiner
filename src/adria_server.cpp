@@ -1,9 +1,8 @@
 #include "adria_server.h"
 
 using namespace TAdriaUtils;
-using namespace TDataAccess;
-using namespace TAdriaComm;
-using namespace TAdriaAlgs;
+using namespace TAdriaServer;
+using namespace TAdriaAnalytics;
 
 uint64 TUtils::GetCurrTimeStamp() {
 	return TTm::GetCurUniMSecs();
@@ -126,7 +125,7 @@ bool TDataProvider::FillCanHs() {
 	CanIdVarNmH.AddDat(159, "temp_sc");
 	CanIdVarNmH.AddDat(160, "hum_sc");
 
-	PredCanSet.AddKey(108);
+	PredCanSet.AddKey(TUtils::FreshWaterCanId);
 
 	RuleEffectCanV.Add(133);	// light 5
 	RuleEffectCanV.Add(135);	// light 22
@@ -164,7 +163,7 @@ TDataProvider::TDataProvider(const TStr& _DbPath, const PNotify& _Notify):
 		HistH(),
 		RuleInstV(),
 		WaterLevelV(),
-		WaterLevelReg(),
+		WaterLevelReg(DbPath, Notify),
 		HistThread(),
 		RuleThread(),
 		DataSection(TCriticalSectionType::cstRecursive),
@@ -249,6 +248,127 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 		HistoryV.AddV(HistH.GetDat(CanId));
 	} catch (const PExcept& Except) {
 		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to retrieve history for CAN: %d", CanId);
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PredictWaterLevel() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Predicting fresh water level...");
+
+	try {
+		const int LevelIdx = 0;
+		const int MAIdx = 1;
+		const int DerivIdx = 2;
+
+		const double MillisToHours = 1.0/(60*60*1000);
+
+		TFltV MaV;
+		TFltV DerivV;
+		TFltV TmV;
+		TBoolV IsFillingV;
+
+		const int MaWindowLen = 2*1200 / TSampleHistThread::SampleWaterLevelTm;
+
+		int NInst;
+		{
+			TLock Lck(HistSection);
+
+			NInst = WaterLevelV.Len();
+
+			MaV.Gen(NInst, 0);
+			DerivV.Gen(NInst, 0);
+			TmV.Gen(NInst, 0);
+			IsFillingV.Gen(NInst, 0);
+
+			double MovingSum = 0;
+			int WindowLen;
+
+			// compute the moving average
+			for (int i = 0; i < NInst; i++) {
+				if (i >= MaWindowLen) {
+					MovingSum -= WaterLevelV[i-MaWindowLen].Val2;
+				}
+
+				MovingSum += WaterLevelV[i].Val2;
+
+				WindowLen = TMath::Mn(i+1, MaWindowLen);
+
+				MaV.Add(MovingSum / WindowLen);
+				TmV.Add(WaterLevelV[i].Val1 * MillisToHours);
+			}
+
+			// compute the derivative
+			for (int i = 0; i < NInst-MaWindowLen; i++) {
+				DerivV[i] = (MaV[i+MaWindowLen] - MaV[i]) /
+						((WaterLevelV[i+MaWindowLen].Val1 - WaterLevelV[i].Val1) * MillisToHours);
+			}
+		}
+
+		const double FillThreshold = 6;
+		const double DerivThreshold = .5;
+
+		bool IsFilling = false;
+
+		int StartLevel = -1;
+		int EndLevel = -1;
+
+		int StartIdx = -1;
+
+		NInst = NInst-MaWindowLen;
+		for (int i = 0; i < NInst; i++) {
+			if (!IsFilling && DerivV[i] > DerivThreshold) {
+				IsFilling = true;
+				StartLevel = MaV[i];
+				StartIdx = i;
+			}
+
+			if (IsFilling && DerivV[i] < -DerivThreshold) {
+				IsFilling = false;
+				EndLevel = MaV[i];
+
+				if (EndLevel - StartLevel >= FillThreshold) {
+					for (int j = StartIdx; j <= i; j++) {
+						IsFillingV[j] = true;
+					}
+				}
+			}
+		}
+
+		IsFilling = false;
+		int FirstIdx = -1;
+
+		// generate new instances
+		TVec<TFltV> InstV;
+		TFltV ValV;
+
+		for (int i = 0; i < NInst; i++) {
+			// check if the water level is steady
+			if (IsFilling && !IsFillingV[i]) {
+				FirstIdx = i;
+				IsFilling = false;
+			}
+			else if (!IsFilling && IsFillingV[i]) {	// stopped being steady
+				int LastIdx = i-1;
+				IsFilling = true;
+
+				double CurrLevel = MaV[FirstIdx];
+				double LastLevel = MaV[LastIdx];
+
+				double DeltaTm = (TmV[LastIdx] - TmV[FirstIdx]);
+				double DeltaLevel = CurrLevel - LastLevel;
+
+				double Deriv = DeltaTm / DeltaLevel;
+
+				TFltV FeatV; FeatV.Add(1); FeatV.Add(Deriv);
+				InstV.Add(FeatV);
+				ValV.Add(Deriv);
+			}
+		}
+
+		// incorporate the new instances into the current model
+		WaterLevelReg.Learn(InstV, ValV);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWaterLevel: Failed to make a prediction!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -429,135 +549,6 @@ void TDataProvider::GenRules() {
 		RulesCallback->OnRulesGenerated(RuleV);
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to generate rules!");
-		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-	}
-}
-
-void TDataProvider::PredictWaterLevel() {
-	Notify->OnNotify(TNotifyType::ntInfo, "Predicting fresh water level...");
-
-	try {
-		const int LevelIdx = 0;
-		const int MAIdx = 1;
-		const int DerivIdx = 2;
-
-		const double MillisToHours = 1.0/(60*60*1000);
-
-		TFltV MaV;
-		TFltV DerivV;
-		TFltV TmV;
-		TBoolV IsFillingV;
-
-		const int MaWindowLen = 2*1200 / TSampleHistThread::SampleWaterLevelTm;
-
-		{
-			TLock Lck(HistSection);
-
-			const int NInst = WaterLevelV.Len();
-
-			MaV.Gen(NInst, 0);
-			DerivV.Gen(NInst, 0);
-			TmV.Gen(NInst, 0);
-			IsFillingV.Gen(NInst, 0);
-
-			double MovingSum = 0;
-			int WindowLen;
-
-			// compute the moving average
-			for (int i = 0; i < NInst; i++) {
-				if (i >= MaWindowLen) {
-					MovingSum -= WaterLevelV[i-MaWindowLen].Val2;
-				}
-
-				MovingSum += WaterLevelV[i].Val2;
-
-				WindowLen = TMath::Mn(i+1, MaWindowLen);
-
-				MaV.Add(MovingSum / WindowLen);
-				TmV.Add(WaterLevelV[i].Val1 * MillisToHours);
-			}
-
-			// compute the derivative
-			for (int i = 0; i < NInst-MaWindowLen; i++) {
-				DerivV[i] = (MaV[i+MaWindowLen] - MaV[i]) /
-						((WaterLevelV[i+MaWindowLen].Val1 - WaterLevelV[i].Val1) * MillisToHours);
-			}
-		}
-
-		const double FillThreshold = 6;
-		const double DerivThreshold = .5;
-
-		bool IsFilling = false;
-
-		int StartLevel = -1;
-		int EndLevel = -1;
-
-		int StartIdx = -1;
-
-		const int NInst = NInst-MaWindowLen;
-		for (int i = 0; i < NInst; i++) {
-			if (!IsFilling && DerivV[i] > DerivThreshold) {
-				IsFilling = true;
-				StartLevel = MaV[i];
-				StartIdx = i;
-			}
-
-			if (IsFilling && DerivV[i] < -DerivThreshold) {
-				IsFilling = false;
-				EndLevel = MaV[i];
-
-				if (EndLevel - StartLevel >= FillThreshold) {
-					for (int j = StartIdx; j <= i; j++) {
-						IsFillingV[j] = true;
-					}
-				}
-			}
-		}
-
-		IsFilling = false;
-		int FirstIdx = -1;
-
-		// generate new instances
-		TVec<TFltV> InstV;
-		TFltV ValV;
-
-		for (int i = 0; i < NInst; i++) {
-			// check if the water level is steady
-			if (IsFilling && !IsFillingV[i]) {
-				FirstIdx = i;
-				IsFilling = false;
-			}
-			else if (!IsFilling && IsFilling[i]) {	// stopped being steady
-				int LastIdx = i-1;
-				IsFilling = true;
-
-				double CurrLevel = MaV[FirstIdx];
-				double LastLevel = MaV[LastIdx];
-
-				double DeltaTm = (TmV[LastIdx] - TmV[FirstIdx]);
-				double DeltaLevel = CurrLevel - LastLevel;
-
-				double Deriv = DeltaTm / DeltaLevel;
-
-				TFltV FeatV; FeatV.Add(1); FeatV.Add(Deriv);
-				InstV.Add(FeatV);
-				ValV.Add(Deriv);
-			}
-		}
-
-		// incorporate the new instances into the current model
-		for (int i = 0; i < InstV.Len(); i++) {
-			const TFlt& x = InstV[i];
-			const double& y = ValV[i];
-
-
-		}
-
-
-
-
-	} catch (const PExcept& Except) {
-		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWaterLevel: Failed to make a prediction!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -1017,155 +1008,6 @@ void TDataProvider::PersistWaterLevelV() {
 }
 
 
-const TChA TAdriaMsg::POST = "POST";
-const TChA TAdriaMsg::PUSH = "PUSH";
-const TChA TAdriaMsg::GET = "GET";
-
-const TChA TAdriaMsg::RES_TABLE = "res_table";
-const TChA TAdriaMsg::HISTORY = "history";
-const TChA TAdriaMsg::PREDICTION = "prediction";
-
-const int TAdriaMsg::BYTES_PER_EL = 6;
-
-////////////////////////////////////////////////////
-// TAdriaMsg
-bool TAdriaMsg::IsComplete() const {
-	if (!IsLastReadEol) { return false; }
-	if (!HasMethod() || !HasCommand()) { return false; }
-
-	if (IsPush() || IsPost()) {
-		if (Length < 0) { return false; }
-
-		int RealLen = Content.Len();
-		if (RealLen != Length) { return false; }
-	}
-
-	return true;
-}
-
-void TAdriaMsg::ReadUntil(const PSIn& In, const TStr& EndStr, TChA& Out) const {
-	const int BuffLen = EndStr.Len();
-
-	const char* Target = EndStr.CStr();
-	char* Buff = new char[BuffLen];
-
-	while (!In->Eof()) {
-		char Ch = In->GetCh();
-
-		Out += Ch;
-
-		// shift buffer
-		for (int i = 0; i < BuffLen-1; i++) { Buff[i] = Buff[i+1]; }
-		Buff[BuffLen - 1] = Ch;
-
-		// check if the delimiter was reached
-		if (TAdriaMsg::BuffsEq(Buff, Target, BuffLen))
-			break;
-	}
-
-	delete Buff;
-}
-
-void TAdriaMsg::ReadLine(const PSIn& In, TChA& Out) const {
-	ReadUntil(In, "\r\n", Out);
-}
-
-void TAdriaMsg::Read(const PSIn& SIn) {
-	// read the method
-	TChA LineBuff;
-	ReadLine(SIn, LineBuff);
-
-	// ignore the EOL
-	LineBuff.DelLastCh();	LineBuff.DelLastCh();
-
-	if (LineBuff.IsPrefix(TAdriaMsg::PUSH)) {
-		Method = TAdriaMsgMethod::ammPush;
-	} else if (LineBuff.IsPrefix(TAdriaMsg::POST)) {
-		Method = TAdriaMsgMethod::ammPost;
-	} else if (LineBuff.IsPrefix(TAdriaMsg::GET)) {
-		Method = TAdriaMsgMethod::ammGet;
-	} else {
-		throw TExcept::New(TStr("Invalid protocol method: ") + LineBuff, "TAdriaMsg::Read(const PSIn& SIn)");
-	}
-
-	// parse the command
-	int SpaceIdx = LineBuff.SearchCh(' ', 3);
-	// check if the line has parameters
-	int QuestionMrkIdx = LineBuff.SearchCh('?', SpaceIdx+1);
-	int AndIdx = LineBuff.SearchCh('&', SpaceIdx+1);
-
-	// multiple cases
-	if (QuestionMrkIdx < 0 && AndIdx < 0) {
-		// only the command is present
-		Command = LineBuff.GetSubStr(SpaceIdx+1, LineBuff.Len());
-	} else if (AndIdx < 0) {
-		// only the parameters are present
-		Command = LineBuff.GetSubStr(SpaceIdx+1, QuestionMrkIdx-1);
-		Params = LineBuff.GetSubStr(QuestionMrkIdx+1, LineBuff.Len());
-	} else if (QuestionMrkIdx < 0) {
-		// only the ID is present
-		Command = LineBuff.GetSubStr(SpaceIdx+1, AndIdx-1);
-		ComponentId = LineBuff.GetSubStr(AndIdx+1, LineBuff.Len());
-	} else {
-		// both the parameters and the ID are present
-		Command = LineBuff.GetSubStr(SpaceIdx+1, QuestionMrkIdx-1);
-		Params = LineBuff.GetSubStr(QuestionMrkIdx+1, AndIdx-1);
-		ComponentId = LineBuff.GetSubStr(AndIdx+1, LineBuff.Len());
-	}
-
-	if (HasContent()) {
-		// parse the length
-		LineBuff.Clr();
-		ReadLine(SIn, LineBuff);
-		// ignore the EOL
-		LineBuff.DelLastCh();	LineBuff.DelLastCh();
-
-		TStr LenStr = LineBuff.GetSubStr(7, LineBuff.Len());
-		Length = LenStr.GetInt();
-
-		// parse the content
-		for (int i = 0; i < Length; i++) {
-			Content += SIn->GetCh();
-		}
-
-		// newline at the end
-		SIn->GetCh();	SIn->GetCh();
-	}
-}
-
-TStr TAdriaMsg::GetStr() const {
-	TChA Res;
-
-	switch (Method) {
-	case TAdriaMsgMethod::ammPush:
-		Res += TAdriaMsg::PUSH;
-		break;
-	case TAdriaMsgMethod::ammPost:
-		Res += TAdriaMsg::POST;
-		break;
-	case TAdriaMsgMethod::ammGet:
-		Res += TAdriaMsg::GET;
-		break;
-	default:
-		throw TExcept::New("Invalid method!", "TAdriaMsg::GetStr()");
-	}
-
-	Res.Push(' ');
-	Res += Command;
-
-	if (HasParams()) { Res.Push('?'); Res += Params; }
-
-	Res += "\r\n";
-
-	if (HasContent()) {
-		Res += TStr("Length=") + TInt::GetStr(Length) + "\r\n";
-		Res += Content + TStr("\r\n");
-	}
-
-	return Res;
-}
-
-
 //////////////////////////////////////////////////////////
 // Adria Client
 TAdriaCommunicator::TAdriaCommunicator(const TStr& _Url, const int& _Port, const PNotify& _Notify):
@@ -1189,7 +1031,7 @@ void TAdriaCommunicator::OnConnect(const uint64& SockId) {
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Connected socket: %lu, writing desired inputs...", SockId);
 
 	Write("PUSH res_table|GET history,prediction&qminer,qm1\r\n");
-	Write("GET res_table\r\n");									// refresh the table
+	Write("GET res_table\r\n");			// refresh the table
 
 	OnAdriaConnected();
 }
@@ -1352,7 +1194,7 @@ void TAdriaCommunicator::AddOnMsgReceivedCallback(const PAdriaMsgCallback& Callb
 
 /////////////////////////////////////////////////////////////////////////////
 // Adria - Server
-TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _DataProvider, const PNotify& _Notify):
+TAdriaApp::TAdriaApp(const PSockEvent& _Communicator, TDataProvider& _DataProvider, const PNotify& _Notify):
 		DataProvider(_DataProvider),
 		Communicator(_Communicator),
 		Notify(_Notify) {
@@ -1362,7 +1204,7 @@ TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _Data
 	DataProvider.SetRulesGeneratedCallback(this);
 }
 
-void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
+void TAdriaApp::OnMsgReceived(const PAdriaMsg& Msg) {
 	try {
 		if (Msg->IsPush() && Msg->GetCommand() == TAdriaMsg::RES_TABLE) {
 			ProcessPushTable(Msg);
@@ -1379,7 +1221,7 @@ void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
 	}
 }
 
-void TAdriaServer::OnConnected() {
+void TAdriaApp::OnConnected() {
 	try {
 		DataProvider.OnConnected();
 	} catch (const PExcept& Except) {
@@ -1388,7 +1230,7 @@ void TAdriaServer::OnConnected() {
 	}
 }
 
-void TAdriaServer::OnPrediction(const TInt& CanId, const TFlt& Val) {
+void TAdriaApp::OnPrediction(const TInt& CanId, const TFlt& Val) {
 	try {
 		TStr ValStr = Val.GetStr();
 
@@ -1403,7 +1245,7 @@ void TAdriaServer::OnPrediction(const TInt& CanId, const TFlt& Val) {
 	}
 }
 
-void TAdriaServer::OnRulesGenerated(const TVec<TPair<TStrV,TStr>>& RuleV) {
+void TAdriaApp::OnRulesGenerated(const TVec<TPair<TStrV,TStr>>& RuleV) {
 	try {
 		TChA RuleStr = "";
 		for (int RuleIdx = 0; RuleIdx < RuleV.Len(); RuleIdx++) {
@@ -1452,11 +1294,11 @@ void TAdriaServer::OnRulesGenerated(const TVec<TPair<TStrV,TStr>>& RuleV) {
 	}
 }
 
-void TAdriaServer::ShutDown() {
+void TAdriaApp::ShutDown() {
 	((TAdriaCommunicator*) Communicator())->ShutDown();
 }
 
-void TAdriaServer::ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH) {
+void TAdriaApp::ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH) {
 	int NEntries = Table.Len() / TAdriaMsg::BYTES_PER_EL;
 
 	int StartIdx;
@@ -1486,7 +1328,7 @@ void TAdriaServer::ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH) 
 }
 
 
-void TAdriaServer::ProcessPushTable(const PAdriaMsg& Msg) {
+void TAdriaApp::ProcessPushTable(const PAdriaMsg& Msg) {
 	try {
 		TStr TimeStr = TAdriaUtils::TUtils::GetCurrTimeStr();
 
@@ -1512,7 +1354,7 @@ void TAdriaServer::ProcessPushTable(const PAdriaMsg& Msg) {
 	}
 }
 
-void TAdriaServer::ProcessGetHistory(const PAdriaMsg& Msg) {
+void TAdriaApp::ProcessGetHistory(const PAdriaMsg& Msg) {
 	Notify->OnNotify(TNotifyType::ntInfo, "Received history request...");
 
 	try {
@@ -1566,20 +1408,18 @@ void TAdriaServer::ProcessGetHistory(const PAdriaMsg& Msg) {
 	}
 }
 
-void TAdriaServer::ProcessGetPrediction(const PAdriaMsg& Msg) {
+void TAdriaApp::ProcessGetPrediction(const PAdriaMsg& Msg) {
 	try {
 		const TInt CanId = TStr(Msg->GetParams()).GetInt();
-		DataProvider.PredictByCan(CanId);
+
+		if (CanId == TUtils::FreshWaterCanId) {	// fresh water level
+			DataProvider.PredictWaterLevel();
+		} else {
+			// no other predictions are implemented yet
+			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Invalid CAN for predictions: %d", CanId.Val);
+		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process GET prediction!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
-}
-
-bool TAdriaMsg::BuffsEq(const char* Buff1, const char* Buff2, const int& BuffLen) {
-	for (int i = 0; i < BuffLen; i++) {
-		if (Buff1[i] != Buff2[i])
-			return false;
-	}
-	return true;
 }

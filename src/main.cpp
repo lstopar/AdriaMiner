@@ -1,7 +1,9 @@
 #include "adria_server.h"
 
+using namespace TAdriaServer;
+
 PNotify Notify = TStdNotify::New();
-TAdriaComm::PAdriaServer AdriaServer;
+PAdriaApp AdriaServer;
 
 bool StopSrv() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Stopping server...");
@@ -41,8 +43,8 @@ int main(int argc, char* argv[]) {
     	// start server
     	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Starting socket client, host: %s, port %d", HostNm.CStr(), PortN);
 
-    	TAdriaComm::TDataProvider DataProvider(DbPath, Notify);
-		AdriaServer = TAdriaComm::TAdriaServer::New(TAdriaComm::TAdriaCommunicator::New(HostNm, PortN, Notify), DataProvider, Notify);
+    	TDataProvider DataProvider(DbPath, Notify);
+		AdriaServer = TAdriaApp::New(TAdriaCommunicator::New(HostNm, PortN, Notify), DataProvider, Notify);
 
 		TLoop::Ref();
 		TLoop::Run();

@@ -5,8 +5,11 @@
 #include <net.h>
 #include <mine.h>
 #include <thread.h>
+#include <utils.h>
 
-namespace TAdriaAlgs {
+namespace TAdriaAnalytics {
+
+using namespace TSignalProc;
 
 //////////////////////////////////////////////////////////////
 // Support
@@ -43,13 +46,27 @@ private:
 // Linear regression wrapper
 class TLinRegWrapper {
 private:
-	PRecLinReg LinReg;
+	static const double RegFact;
+	static const double ForgetFact;
+	static const int FeatDim;
+
+	TStr DbPath;
+	TRecLinReg LinReg;
+
+	TCriticalSection DataSection;
+
+	PNotify Notify;
 
 public:
-	TLinRegWrapper(const TStr& DbPath);
+	TLinRegWrapper(const TStr& DbPath, const PNotify& Notify);
+
+	double Predict(const TFltV& FeatV);
+	void Learn(const TFltV& FeatV, const TFlt& Val);
+	void Learn(const TVec<TFltV>& InstV, const TFltV& ValV);
 
 private:
 	void LoadStructs();
+	void SaveStructs();
 };
 
 //===========================================================================================
