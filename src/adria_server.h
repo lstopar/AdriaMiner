@@ -5,6 +5,98 @@
 #include <net.h>
 #include <mine.h>
 #include <thread.h>
+#include <processing.h>
+
+namespace TAdriaUtils {
+
+class TUtils {
+public:
+	static uint64 GetCurrTimeStamp();
+	static TStr GetCurrTimeStr();
+
+	// file names
+	static TStr GetLogFName(const TStr& DbPath) { return DbPath + "/readings.log"; }
+	static TStr GetHistFName(const TStr& DbPath) { return DbPath + "/history.bin"; }
+	static TStr GetHistBackupFName( const TStr& DbPath) { return DbPath + "/history-backup.bin"; }
+	static TStr GetRuleFName(const TStr& DbPath) { return DbPath + "/rule_instances.bin"; }
+	static TStr GetBackupRuleFName(const TStr& DbPath) { return DbPath + "/rule_instances-backup.bin"; }
+	static TStr GetWaterLevelFNm(const TStr& DbPath) { return DbPath + "/water_level.bin"; }
+	static TStr GetBackupWLevelFNm(const TStr& DbPath) { return DbPath + "/water_level-backup.bin"; }
+
+	// persist
+	template <class TStruct>
+	static void PersistStruct(const TStr& StructFNm, const TStr& StructBackupFNm, TStruct& Struct, const PNotify& Notify) {
+		Notify->OnNotify(TNotifyType::ntInfo, "Persisting structure...");
+
+		try {
+			// remove the file and create a new file
+			if (TFile::Exists(StructFNm)) {
+				TFile::Del(StructFNm);
+			}
+
+			// save a new rule file
+			{
+				TFOut Out(StructFNm);
+				Struct.Save(Out);
+			}
+
+			// the new file is created, now create a new backup file
+			// first remove the old backup file
+			if (TFile::Exists(StructBackupFNm)) {
+				TFile::Del(StructBackupFNm);
+			}
+
+			// save a new rule file
+			{
+				TFOut Out(StructBackupFNm);
+				Struct.Save(Out);
+			}
+		} catch (const PExcept& Except) {
+			Notify->OnNotify(TNotifyType::ntErr, "Failed to persist structure!");
+			Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+		}
+	}
+
+	// tries to load a structure from a file `StructFNm` or a backup file `StructBackupFNm`
+	// returns true if success
+	template <class TStruct>
+	static bool LoadStruct(const TStr& StructFNm, const TStr& StructBackupFNm, TStruct& Struct, const PNotify& Notify) {
+		Notify->OnNotify(TNotifyType::ntInfo, "Loading structure...");
+
+		try {
+			bool Success = false;
+
+			if (TFile::Exists(StructFNm)) {
+				try {
+					TFIn SIn(StructFNm);
+					Struct = TStruct(SIn);
+					Success = true;
+				} catch (const PExcept& Except) {
+					Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadWaterLevelV: An exception occurred while loading water levels!");
+					Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+				}
+			}
+
+			if (!Success && TFile::Exists(StructBackupFNm)) {
+				try {
+					TFIn SIn(StructBackupFNm);
+					Struct = TStruct(SIn);
+					Success = true;
+				} catch (const PExcept& Except) {
+					Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadWaterLevelV: An exception occurred while loading backup water levels!");
+					Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+				}
+			}
+			return Success;
+		} catch (const PExcept& Except) {
+			Notify->OnNotify(TNotifyType::ntErr, "Failed to load structure!");
+			Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+			return false;
+		}
+	}
+};
+
+}
 
 namespace TDataAccess {
 
@@ -12,6 +104,12 @@ class TPredictionCallback {
 public:
 	virtual void OnPrediction(const TInt& CanId, const TFlt& Val) = 0;
 	virtual ~TPredictionCallback() {}
+};
+
+class TRulesGeneratedCallback {
+public:
+	virtual void OnRulesGenerated(const TVec<TPair<TStrV,TStr>>& RuleV) = 0;
+	virtual ~TRulesGeneratedCallback() {}
 };
 
 /////////////////////////////////////////////////////////////////////
@@ -22,6 +120,7 @@ private:
 	class TSampleHistThread: public TThread {
 	public:
 		static uint64 SleepTm;
+		static uint64 SampleWaterLevelTm;
 
 	private:
 		TDataProvider* DataProvider;
@@ -35,6 +134,23 @@ private:
 		void Stop() { Running = false; }
 	};
 
+	// a thread that periodically recomputes rules which are
+	// then sent to UMKO
+	class TRuleThread: public TThread {
+	private:
+		static uint64 SleepTm;
+
+		TDataProvider* DataProvider;
+		bool Running;
+
+		PNotify Notify;
+
+	public:
+		TRuleThread(TDataProvider* Provider, const PNotify& _Notify);
+		void Run();
+		void Stop() { Running = false; }
+	};
+
 private:
 	static TIntStrH CanIdVarNmH;
 	static TIntSet PredCanSet;
@@ -43,15 +159,28 @@ private:
 	static bool FillCanHs();
 	static bool Init;
 
-	TStr DbPath;
-	TFltV EntryTbl;
-	THash<TInt, TUInt64FltKdV> HistH;
+	static TIntV RuleEffectCanV;
+	static TIntV RuleObsCanV;
+	static TIntIntH RuleEventCanIdIdxH;
+	static TIntIntH RuleObsCanIdIdxH;
+
+	const TStr DbPath;
+	TFltV EntryTbl;				// current state
+	THash<TInt, TUInt64FltKdV> HistH;	// history for showing graphs and making predictions
+	TVec<TKeyDat<TUInt64,TFltV>> RuleInstV;	// table that contains values used to learn association rules
+	TUInt64FltPrV WaterLevelV;
+
+	TLinRegWrapper WaterLevelReg;
 
 	PThread HistThread;
+	PThread RuleThread;
+
 	TPredictionCallback* PredictionCallback;
+	TRulesGeneratedCallback* RulesCallback;
 
 	TCriticalSection DataSection;
 	TCriticalSection HistSection;
+	TCriticalSection RuleSection;
 	PNotify Notify;
 
 public:
@@ -61,40 +190,66 @@ public:
 
 //	static void InitAggregates(TQm::PBase& Base, const PNotify& Notify);
 public:
+	void OnConnected();
 	// stores a new record
 	void AddRec(const int& CanId, const PJsonVal& Rec);
+	// adds the current state to the table used for learning rules
+	void AddRuleInstance(const int& CanId);
 	// returns the history of the sensor with the given CAN ID
 	void GetHistory(const int& CanId, TUInt64FltKdV& HistoryV);
-	// makes a prediction for the desired CAN ID and fires an event
-	void PredictByCan(const int& CanId);
 
 	void SetPredictionCallback(TPredictionCallback* Callback) { PredictionCallback = Callback; }
+	void SetRulesGeneratedCallback(TRulesGeneratedCallback* Callback) { RulesCallback = Callback; }
 
 private:
 	// saves a record
 	void SaveRec(const int& CanId, const PJsonVal& Rec);
 	// adds a record to the external log
 	void AddRecToLog(const int& CanId, const PJsonVal& Rec);
-	void UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm);
-	void UpdateHist();
+
+	// sample data
+	void SampleHistFromV(const TFltV& StateV, const uint64& SampleTm);
+	void SampleHist();
+	void SampleWaterLevel();
+
+	// analytics
 	void MakePredictions();
-	void InitHist();
-	void LoadHistForCan(const TInt& CanId);
+	// generate rules for UMKO
+	void GenRules();
+	// predicts when the fresh water will be empty
+	void PredictWaterLevel();
+
+	// makes a prediction for the desired CAN ID and fires an event
+//	void PredictByCan(const int& CanId);
+
+	// preprocesses the instance vectors for the APRIORI algorithm
+	void PreprocessApriori(const TVec<TFltV>& EventInstV,
+				const TVec<TFltV>& ObsInstV, TIntVV& EventMat, TIntVV& ObsMat);
+	void InterpretApriori(const TVec<TPair<TIntV,TInt>>& RuleIdxV, TVec<TPair<TStrV,TStr>>& RuleV) const;
+
+	// load methods
+	void LoadStructs();
+//	void LoadHistForCan(const TInt& CanId);
+	void LoadHistV();
+	void LoadRuleInstV();
+	void LoadWaterLevelV();
+
+	// save methods
 	void PersistHist();
-	void PersistHistForCan(const TInt& CanId);
+//	void PersistHistForCan(const TInt& CanId);
+	void PersistRuleInstV();
+	void PersistWaterLevelV();
 
 private:
 	// helpers
 	// removes directory Dest and copies Src into it
 	void CopyDir(const TStr& Src, const TStr& Dest);
 
-	TStr GetLogFName() { return DbPath + "/readings.log"; }
-	TStr GetHistFName(const TInt& CanId) { return DbPath + "/" + CanId.GetStr() + ".bin"; }
-	TStr GetHistBackupFName(const TInt& CanId) { return DbPath + "/" + CanId.GetStr() + "-backup.bin"; }
+public:
+	const TStr& GetDbPath() const { return DbPath; }
 };
 
 }
-
 
 namespace TAdriaComm {
 
@@ -191,6 +346,7 @@ public:
 	friend class TPt<TAdriaMsgCallback>;
 public:
 	virtual void OnMsgReceived(const PAdriaMsg& Msg) = 0;
+	virtual void OnConnected() = 0;
 
 	virtual ~TAdriaMsgCallback() {}
 };
@@ -252,6 +408,7 @@ public:
 
 	void AddOnMsgReceivedCallback(const PAdriaMsgCallback& Callback);
 	void OnMsgReceived(const PAdriaMsg Msg);
+	void OnAdriaConnected();
 
 private:
 	void Connect();
@@ -264,7 +421,8 @@ private:
 
 class TAdriaServer;
 typedef TPt<TAdriaServer> PAdriaServer;
-class TAdriaServer: public TAdriaMsgCallback, public TPredictionCallback {
+class TAdriaServer: public TAdriaMsgCallback, public TPredictionCallback,
+					public TRulesGeneratedCallback {
 private:
 	TCRef CRef;
 public:
@@ -283,7 +441,9 @@ public:
 
 public:
 	void OnMsgReceived(const PAdriaMsg& Msg);
+	void OnConnected();
 	void OnPrediction(const TInt& CanId, const TFlt& Val);
+	void OnRulesGenerated(const TVec<TPair<TStrV,TStr>>& RuleV);
 
 	void ShutDown();
 

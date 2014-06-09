@@ -20,7 +20,7 @@ GLIB_THREAD = $(GLIB)/concurrent/
 INCLUDE = -I. -I$(GLIB_BASE) -I$(GLIB_NET) -I$(GLIB_MINE) -I$(GLIB_MISC) -I$(GLIB_THREAD) -I$(LIBUV)
 
 # main object files
-MAINOBJS = main.o adria_server.o
+MAINOBJS = main.o adria_server.o processing.o
 
 all: $(MAINOBJS)
 

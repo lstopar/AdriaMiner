@@ -17,7 +17,7 @@ GLIB = ../glib
 
 STATIC_LIBS = $(GLIB)/glib.a $(LIBUV)/libuv.a
 
-QMOBJS = src/adria_server.o
+QMOBJS = src/processing.o src/adria_server.o
 MAINOBJ = src/main.o
 
 all: adria_miner

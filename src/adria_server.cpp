@@ -1,37 +1,118 @@
 #include "adria_server.h"
 
+using namespace TAdriaUtils;
 using namespace TDataAccess;
 using namespace TAdriaComm;
+using namespace TAdriaAlgs;
+
+uint64 TUtils::GetCurrTimeStamp() {
+	return TTm::GetCurUniMSecs();
+}
+
+TStr TUtils::GetCurrTimeStr() {
+	return TTm::GetTmFromMSecs(GetCurrTimeStamp()).GetWebLogDateTimeStr(true, "T");
+}
 
 /////////////////////////////////////////////////////////////////////
 // TSampleHistThread
+
 //unsigned int TDataProvider::TSampleHistThread::SleepTm = 10*60*1000;
-uint64 TDataProvider::TSampleHistThread::SleepTm = 1000*60*10;
+uint64 TDataProvider::TSampleHistThread::SleepTm = 1000*60*10;	// 10min
+uint64 TDataProvider::TSampleHistThread::SampleWaterLevelTm = 1000*10;	// 10s
 
 TDataProvider::TSampleHistThread::TSampleHistThread(TDataProvider* Provider, const PNotify& _Notify):
-					DataProvider(Provider), Running(false), Notify(_Notify) {
+					DataProvider(Provider),
+					Running(false),
+					Notify(_Notify) {
 	Notify->OnNotify(TNotifyType::ntInfo, "SampleHistThread initialized!");
 }
 
 void TDataProvider::TSampleHistThread::Run() {
-
 	Running = true;
-	TSysProc::Sleep(SleepTm);
+	TSysProc::Sleep(TSampleHistThread::SleepTm);
+
+	int LoopIdx = 0;
 
 	while (Running) {
-		DataProvider->UpdateHist();
-		DataProvider->MakePredictions();
-		TSysProc::Sleep(SleepTm);
+		LoopIdx++;
+
+		try {
+			uint64 StartTm = TUtils::GetCurrTimeStamp();
+			Notify->OnNotify(TNotifyType::ntInfo, "History loop...");
+
+			DataProvider->SampleWaterLevel();
+
+			if (LoopIdx % (SleepTm / SampleWaterLevelTm) == 0) {
+				DataProvider->SampleHist();
+				DataProvider->MakePredictions();
+				LoopIdx = 0;
+			}
+
+			uint64 Dur = TUtils::GetCurrTimeStamp() - StartTm;
+			TSysProc::Sleep(TMath::Mx(SampleWaterLevelTm - Dur, uint64(1000)));
+		} catch (const PExcept& Except) {
+			Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::TSampleHistThread::Run: failed to execute loop!");
+			Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+		} catch (...) {
+			Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::TSampleHistThread::Run: WTF!? failed to catch exception!");
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////
+// TRuleThread
+//uint64 TDataProvider::TRuleThread::SleepTm = 1000*60*60*30;	// 30 mins
+uint64 TDataProvider::TRuleThread::SleepTm = 1000*60*1;	// 1min
+
+TDataProvider::TRuleThread::TRuleThread(TDataProvider* Provider, const PNotify& _Notify):
+		DataProvider(Provider),
+		Running(false),
+		Notify(_Notify) {
+	Notify->OnNotify(TNotifyType::ntInfo, "Rule thread initialized!");
+}
+
+void TDataProvider::TRuleThread::Run() {
+	Running = true;
+//	TSysProc::Sleep(TRuleThread::SleepTm);
+
+	long Count = 0;
+	while (Running) {
+		try {
+			uint64 StartTm = TUtils::GetCurrTimeStamp();
+			Notify->OnNotify(TNotifyType::ntInfo, "Starting rule loop...");
+
+			DataProvider->PersistRuleInstV();
+
+			if (Count++ % 5 == 0) {
+				DataProvider->GenRules();
+			}
+
+			uint64 Dur = TUtils::GetCurrTimeStamp() - StartTm;
+
+			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Rule loop took %ld ms, sleeping...", Dur);
+
+			TSysProc::Sleep(TMath::Mx(TRuleThread::SleepTm-Dur, uint64(1000)));
+		} catch (const PExcept& Except) {
+			Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::TRuleThread::Run: failed to execute rule loop!");
+			Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+		} catch (...) {
+			Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::TRuleThread::Run: WTF!? failed to catch exception!");
+		}
 	}
 }
 
 /////////////////////////////////////////////////////////////////////
 // Data handler
-uint64 TDataProvider::HistDur = 1000*60*60*24*7;
-//uint64 TDataProvider::HistDur = 1000*60*10;
+uint64 TDataProvider::HistDur = 1000*60*60*24*7;	// one week
 int TDataProvider::EntryTblLen = 256;
 TIntStrH TDataProvider::CanIdVarNmH;
+
 TIntSet TDataProvider::PredCanSet;
+
+TIntV TDataProvider::RuleEffectCanV;
+TIntV TDataProvider::RuleObsCanV;
+TIntIntH TDataProvider::RuleEventCanIdIdxH;
+TIntIntH TDataProvider::RuleObsCanIdIdxH;
 
 bool TDataProvider::FillCanHs() {
 	CanIdVarNmH.AddDat(103, "temp_cabin");
@@ -47,6 +128,30 @@ bool TDataProvider::FillCanHs() {
 
 	PredCanSet.AddKey(108);
 
+	RuleEffectCanV.Add(133);	// light 5
+	RuleEffectCanV.Add(135);	// light 22
+	RuleEffectCanV.Add(136);	// light 4
+	RuleEffectCanV.Add(137);	// light 8
+	RuleEffectCanV.Add(138);	// light 9
+	RuleEffectCanV.Add(125);	// light 13
+	RuleEffectCanV.Add(127);	// light 21
+	RuleEffectCanV.Add(145);	// nappa
+	RuleEffectCanV.Add(163);	// projector
+	RuleEffectCanV.Add(181);	// stairs state
+	RuleEffectCanV.Add(152);	// stairs state
+
+	RuleObsCanV.Add(124);	// luminocity bedroom
+	RuleObsCanV.Add(149);	// luminocity living space
+	RuleObsCanV.Add(147);	// temperature living space
+
+	// add to sets for faster lookup
+	for (int i = 0; i < RuleEffectCanV.Len(); i++) {
+		RuleEventCanIdIdxH.AddDat(RuleEffectCanV[i], i);
+	}
+	for (int i = 0; i < RuleObsCanV.Len(); i++) {
+		RuleObsCanIdIdxH.AddDat(RuleObsCanV[i], i);
+	}
+
 	return true;
 }
 
@@ -57,27 +162,76 @@ TDataProvider::TDataProvider(const TStr& _DbPath, const PNotify& _Notify):
 		DbPath(_DbPath),
 		EntryTbl(TDataProvider::EntryTblLen, TDataProvider::EntryTblLen),
 		HistH(),
+		RuleInstV(),
+		WaterLevelV(),
+		WaterLevelReg(),
 		HistThread(),
+		RuleThread(),
 		DataSection(TCriticalSectionType::cstRecursive),
 		HistSection(TCriticalSectionType::cstRecursive),
+		RuleSection(TCriticalSectionType::cstRecursive),
 		Notify(_Notify) {
 
-	InitHist();
-	HistThread = new TSampleHistThread(this, Notify);
-	HistThread->Start();
+	LoadStructs();
+
 	Notify->OnNotify(TNotifyType::ntInfo, "Data provider initialized!");
+}
+
+void TDataProvider::OnConnected() {
+	Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::OnConnected: starting threads...");
+
+	try {
+		// init threads
+		HistThread = new TSampleHistThread(this, Notify);
+		RuleThread = new TRuleThread(this, Notify);
+
+		// start threads
+		HistThread->Start();
+		RuleThread->Start();
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "TDataProvider: failed to start threads!!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
 }
 
 void TDataProvider::AddRec(const int& CanId, const PJsonVal& Rec) {
 	try {
-		TLock Lock(DataSection);
+		{
+			TLock Lock(DataSection);
 
-		// put the entry into the state table
-		EntryTbl[CanId] = Rec->GetObjNum("value");
+			// put the entry into the state table
+			EntryTbl[CanId] = Rec->GetObjNum("value");
 
-		AddRecToLog(CanId, Rec);
+			AddRecToLog(CanId, Rec);
+		}
+		if (RuleEventCanIdIdxH.IsKey(CanId)) {
+			AddRuleInstance(CanId);
+		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Unable to add record to base!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::AddRuleInstance(const int& CanId) {
+	try {
+		TLock Lock(RuleSection);
+
+		TFltV StateV(RuleEffectCanV.Len() + RuleObsCanV.Len(),0);
+
+		for (int i = 0; i < RuleEffectCanV.Len(); i++) {
+			const int& CanId = RuleEffectCanV[i];
+			StateV.Add(EntryTbl[CanId]);
+		}
+		for (int i = 0; i < RuleObsCanV.Len(); i++) {
+			const int& CanId = RuleObsCanV[i];
+			StateV.Add(EntryTbl[CanId]);
+		}
+
+		uint64 Tm = TUtils::GetCurrTimeStamp();
+		RuleInstV.Add(TKeyDat<TUInt64,TFltV>(Tm, StateV));
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Unable to add an instance to the rule DB!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -99,48 +253,48 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 	}
 }
 
-void TDataProvider::PredictByCan(const int& CanId) {
-	try {
-		TUInt64FltKdV HistV;	GetHistory(CanId, HistV);
-
-		double DValSum = 0.0;
-		double DtSum = 0.0;
-		int DropCount = 0;
-
-		TUInt64FltKd* PrevTmValKd = NULL;
-		const int NHist = HistV.Len();
-		for (int i = NHist-1; i >= 0; i--) {
-			TUInt64FltKd* CurrTmValKd = &HistV[i];
-
-			if (PrevTmValKd != NULL && CurrTmValKd->Dat <= PrevTmValKd->Dat * 1.05 /* threshold */) {
-				double Dt = double(CurrTmValKd->Key - PrevTmValKd->Key) / (1000*60*60);	// dt in hours
-				double DVal = CurrTmValKd->Dat - PrevTmValKd->Dat;
-
-				DValSum += DVal;
-				DtSum += Dt;
-				DropCount++;
-			}
-
-			PrevTmValKd = CurrTmValKd;
-		}
-
-		double DValAvg = DValSum / DtSum;
-		double CurrVal = EntryTbl[CanId];
-
-		double HoursLeft = -CurrVal / DValAvg;
-		PredictionCallback->OnPrediction(CanId, HoursLeft);
-	} catch (const PExcept& Except) {
-		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to make a prediction for CAN: %d", CanId);
-		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-	}
-}
+//void TDataProvider::PredictByCan(const int& CanId) {
+//	try {
+//		TUInt64FltKdV HistV;	GetHistory(CanId, HistV);
+//
+//		double DValSum = 0.0;
+//		double DtSum = 0.0;
+//		int DropCount = 0;
+//
+//		TUInt64FltKd* PrevTmValKd = NULL;
+//		const int NHist = HistV.Len();
+//		for (int i = NHist-1; i >= 0; i--) {
+//			TUInt64FltKd* CurrTmValKd = &HistV[i];
+//
+//			if (PrevTmValKd != NULL && CurrTmValKd->Dat <= PrevTmValKd->Dat * 1.05 /* threshold */) {
+//				double Dt = double(CurrTmValKd->Key - PrevTmValKd->Key) / (1000*60*60);	// dt in hours
+//				double DVal = CurrTmValKd->Dat - PrevTmValKd->Dat;
+//
+//				DValSum += DVal;
+//				DtSum += Dt;
+//				DropCount++;
+//			}
+//
+//			PrevTmValKd = CurrTmValKd;
+//		}
+//
+//		double DValAvg = DValSum / DtSum;
+//		double CurrVal = EntryTbl[CanId];
+//
+//		double HoursLeft = -CurrVal / DValAvg;
+//		PredictionCallback->OnPrediction(CanId, HoursLeft);
+//	} catch (const PExcept& Except) {
+//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to make a prediction for CAN: %d", CanId);
+//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//	}
+//}
 
 
 void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
 	try {
 		TLock Lock(DataSection);
 
-		const TStr LogFName = GetLogFName();
+		const TStr LogFName = TUtils::GetLogFName(DbPath);
 
 		bool LogExists = TFile::Exists(LogFName);
 		TFOut Out(LogFName, true);
@@ -159,7 +313,7 @@ void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
 	}
 }
 
-void TDataProvider::UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm) {
+void TDataProvider::SampleHistFromV(const TFltV& StateV, const uint64& SampleTm) {
 	try {
 		TLock Lck(HistSection);
 
@@ -183,44 +337,377 @@ void TDataProvider::UpdateHistFromV(const TFltV& StateV, const uint64& SampleTm)
 		}
 
 	} catch (const PExcept& Except) {
-		Notify->OnNotify(TNotifyType::ntErr, "Failed to update history!");
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to sample history!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
 
-void TDataProvider::UpdateHist() {
+void TDataProvider::SampleHist() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Adding current state to history...");
-	UpdateHistFromV(EntryTbl, TTm::GetCurUniMSecs());
+	SampleHistFromV(EntryTbl, TUtils::GetCurrTimeStamp());
 	PersistHist();
+}
+
+void TDataProvider::SampleWaterLevel() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Adding current state to history...");
+
+	try {
+
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to sample fresh water level!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
 }
 
 void TDataProvider::MakePredictions() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Making predictions and distributing...");
 
 	try {
-		int CurrKeyId = PredCanSet.FFirstKeyId();
-		while (PredCanSet.FNextKeyId(CurrKeyId)) {
-			PredictByCan(PredCanSet[CurrKeyId]);
-		}
+		PredictWaterLevel();
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to make predictions!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
 
-void TDataProvider::InitHist() {
+void TDataProvider::GenRules() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Generating rules...");
+
+	try {
+		// put all the instances into a different vector and
+		// operate on them from there
+		TVec<TFltV> EventInstV;
+		TVec<TFltV> ObsInstV;
+
+		{
+			Notify->OnNotify(TNotifyType::ntInfo, "Copying instances...");
+			TLock Lck(RuleSection);
+
+			if (RuleInstV.Empty()) {
+				Notify->OnNotify(TNotifyType::ntInfo, "No instances for generating rules present, returning...");
+				return;
+			}
+
+			int NInst = RuleInstV.Len();
+			EventInstV.Gen(NInst,0);
+			ObsInstV.Gen(NInst,0);
+
+			for (int i = 0; i < NInst; i++) {
+				TFltV EffectV(RuleEffectCanV.Len(),0);
+				TFltV ObsV(RuleObsCanV.Len(),0);
+
+				for (int j = 0; j < RuleEffectCanV.Len(); j++) {
+					EffectV.Add(RuleInstV[i].Dat[j]);
+				}
+				for (int j = 0; j < RuleObsCanV.Len(); j++) {
+					ObsV.Add(RuleInstV[i].Dat[j + RuleEffectCanV.Len()]);
+				}
+
+				EventInstV.Add(EffectV);
+				ObsInstV.Add(ObsV);
+			}
+		}
+
+		// run the APRIORI algorithm
+		double MinSupp = .8;
+		double MinConf = .8;
+		int MaxItems = 3;
+
+		TIntVV EventMat;
+		TIntVV ObsMat;
+		TVec<TPair<TIntV,TInt>> RuleIdxV;
+		TVec<TPair<TStrV,TStr>> RuleV;
+
+		PreprocessApriori(EventInstV, ObsInstV, EventMat, ObsMat);
+		TApriori<TSupport, TConfidence>::Run(EventMat, ObsMat, MinSupp, MinConf, RuleIdxV, MaxItems, Notify);
+
+		if (RuleIdxV.Empty()) { return; }
+
+		InterpretApriori(RuleIdxV, RuleV);
+
+		// send the rules to the bus
+		RulesCallback->OnRulesGenerated(RuleV);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to generate rules!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PredictWaterLevel() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Predicting fresh water level...");
+
+	try {
+		const int LevelIdx = 0;
+		const int MAIdx = 1;
+		const int DerivIdx = 2;
+
+		const double MillisToHours = 1.0/(60*60*1000);
+
+		TFltV MaV;
+		TFltV DerivV;
+		TFltV TmV;
+		TBoolV IsFillingV;
+
+		const int MaWindowLen = 2*1200 / TSampleHistThread::SampleWaterLevelTm;
+
+		{
+			TLock Lck(HistSection);
+
+			const int NInst = WaterLevelV.Len();
+
+			MaV.Gen(NInst, 0);
+			DerivV.Gen(NInst, 0);
+			TmV.Gen(NInst, 0);
+			IsFillingV.Gen(NInst, 0);
+
+			double MovingSum = 0;
+			int WindowLen;
+
+			// compute the moving average
+			for (int i = 0; i < NInst; i++) {
+				if (i >= MaWindowLen) {
+					MovingSum -= WaterLevelV[i-MaWindowLen].Val2;
+				}
+
+				MovingSum += WaterLevelV[i].Val2;
+
+				WindowLen = TMath::Mn(i+1, MaWindowLen);
+
+				MaV.Add(MovingSum / WindowLen);
+				TmV.Add(WaterLevelV[i].Val1 * MillisToHours);
+			}
+
+			// compute the derivative
+			for (int i = 0; i < NInst-MaWindowLen; i++) {
+				DerivV[i] = (MaV[i+MaWindowLen] - MaV[i]) /
+						((WaterLevelV[i+MaWindowLen].Val1 - WaterLevelV[i].Val1) * MillisToHours);
+			}
+		}
+
+		const double FillThreshold = 6;
+		const double DerivThreshold = .5;
+
+		bool IsFilling = false;
+
+		int StartLevel = -1;
+		int EndLevel = -1;
+
+		int StartIdx = -1;
+
+		const int NInst = NInst-MaWindowLen;
+		for (int i = 0; i < NInst; i++) {
+			if (!IsFilling && DerivV[i] > DerivThreshold) {
+				IsFilling = true;
+				StartLevel = MaV[i];
+				StartIdx = i;
+			}
+
+			if (IsFilling && DerivV[i] < -DerivThreshold) {
+				IsFilling = false;
+				EndLevel = MaV[i];
+
+				if (EndLevel - StartLevel >= FillThreshold) {
+					for (int j = StartIdx; j <= i; j++) {
+						IsFillingV[j] = true;
+					}
+				}
+			}
+		}
+
+		IsFilling = false;
+		int FirstIdx = -1;
+
+		// generate new instances
+		TVec<TFltV> InstV;
+		TFltV ValV;
+
+		for (int i = 0; i < NInst; i++) {
+			// check if the water level is steady
+			if (IsFilling && !IsFillingV[i]) {
+				FirstIdx = i;
+				IsFilling = false;
+			}
+			else if (!IsFilling && IsFilling[i]) {	// stopped being steady
+				int LastIdx = i-1;
+				IsFilling = true;
+
+				double CurrLevel = MaV[FirstIdx];
+				double LastLevel = MaV[LastIdx];
+
+				double DeltaTm = (TmV[LastIdx] - TmV[FirstIdx]);
+				double DeltaLevel = CurrLevel - LastLevel;
+
+				double Deriv = DeltaTm / DeltaLevel;
+
+				TFltV FeatV; FeatV.Add(1); FeatV.Add(Deriv);
+				InstV.Add(FeatV);
+				ValV.Add(Deriv);
+			}
+		}
+
+		// incorporate the new instances into the current model
+		for (int i = 0; i < InstV.Len(); i++) {
+			const TFlt& x = InstV[i];
+			const double& y = ValV[i];
+
+
+		}
+
+
+
+
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWaterLevel: Failed to make a prediction!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PreprocessApriori(const TVec<TFltV>& EventInstV,
+				const TVec<TFltV>& ObsInstV, TIntVV& EventMat, TIntVV& ObsMat) {
+
+	if (EventInstV.Empty())
+		return;
+
+	Notify->OnNotify(TNotifyType::ntInfo, "Preprocessing for APRIORI...");
+
+	try {
+		const int NRows = EventInstV.Len();
+		const int NEventCols = EventInstV[0].Len();
+
+		// first fill the event matrix
+		// it only consists of 0 and 1
+		EventMat.Gen(NRows, NEventCols);
+		for (int RowIdx = 0; RowIdx < NRows; RowIdx++) {
+			for (int ColIdx = 0; ColIdx < NEventCols; ColIdx++) {
+				EventMat.PutXY(RowIdx, ColIdx, EventInstV[RowIdx][ColIdx] > 0 ? 1 : 0);
+			}
+		}
+
+
+		if (!ObsInstV.Empty()) {
+			// discretize the observations
+			const int LumBedCanId = 124;	// luminocity bedroom
+			const int LumLsCanId = 149;		// luminocity living space
+			const int TempLsCanId = 147;	// temperature living space
+
+			const int LumBedIdx = RuleObsCanIdIdxH.GetDat(LumBedCanId);
+			const int LumLsIdx = RuleObsCanIdIdxH.GetDat(LumLsCanId);	// intervals for luminocity
+			const int TempLsIdx = RuleObsCanIdIdxH.GetDat(TempLsCanId);	// intervals for temperature
+
+			const int NIntervals = 3;
+
+			const TFltPr LumThrs(0,5);
+			const TFltPr TempThrs(10,28);
+
+			ObsMat.Gen(NRows, 3*ObsInstV[0].Len());
+
+			for (int i = 0; i < NRows; i++) {
+				double LumBedVal = TMath::Log(ObsInstV[i][LumBedIdx]);
+				double LumLsVal = TMath::Log(ObsInstV[i][LumLsIdx]);
+				double TempLsVal = ObsInstV[i][TempLsIdx];
+
+				if (LumBedVal < LumThrs.Val1) {
+					ObsMat.PutXY(i, 0, 1);
+				} else if (LumThrs.Val1 <= LumBedVal && LumBedVal <= LumThrs.Val2) {
+					ObsMat.PutXY(i, 1, 1);
+				} else {
+					ObsMat.PutXY(i, 2, 1);
+				}
+
+				if (LumLsVal < LumThrs.Val1) {
+					ObsMat.PutXY(i, NIntervals, 1);
+				} else if (LumThrs.Val1 <= LumLsVal && LumLsVal <= LumThrs.Val2) {
+					ObsMat.PutXY(i, NIntervals+1, 1);
+				} else {
+					ObsMat.PutXY(i, NIntervals+2, 1);
+				}
+
+				if (TempLsVal < TempThrs.Val1) {
+					ObsMat.PutXY(i, 2*NIntervals, 1);
+				} else if (TempThrs.Val1 <= TempLsVal && TempLsVal <= TempThrs.Val2) {
+					ObsMat.PutXY(i, 2*NIntervals+1, 1);
+				} else {
+					ObsMat.PutXY(i, 2*NIntervals+2, 1);
+				}
+		}
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to preprocess data for APRIORI!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::InterpretApriori(const TVec<TPair<TIntV,TInt>>& RuleIdxV, TVec<TPair<TStrV,TStr>>& RuleV) const {
+	try {
+		Notify->OnNotify(TNotifyType::ntInfo, "Interpreting rules...");
+
+		const int NRules = RuleIdxV.Len();
+
+		RuleV.Gen(NRules,0);
+
+		// prepare a lookup table
+		TIntIntH IdxCanIdH;
+		TIntV EventCanV;	RuleEventCanIdIdxH.GetKeyV(EventCanV);
+		TIntV ObsCanV;	RuleObsCanIdIdxH.GetKeyV(ObsCanV);
+
+		for (int i = 0; i < EventCanV.Len(); i++) {
+			const int CanId = EventCanV[i];
+			const int EventIdx = RuleEventCanIdIdxH.GetDat(CanId);
+			IdxCanIdH.AddDat(EventIdx, CanId);
+		}
+		for (int i = 0; i < ObsCanV.Len(); i++) {
+			const int CanId = ObsCanV[i];
+			IdxCanIdH.AddDat(EventCanV.Len() + 3*RuleObsCanIdIdxH.GetDat(CanId), CanId);
+			IdxCanIdH.AddDat(EventCanV.Len() + 3*RuleObsCanIdIdxH.GetDat(CanId)+1, CanId);
+			IdxCanIdH.AddDat(EventCanV.Len() + 3*RuleObsCanIdIdxH.GetDat(CanId)+2, CanId);
+		}
+
+		// replace indexes with CAN IDs
+		for (int RuleIdx = 0; RuleIdx < NRules; RuleIdx++) {
+			const TPair<TIntV,TInt>& RuleIdxPr = RuleIdxV[RuleIdx];
+
+			// effects
+			const TInt EffectCan = IdxCanIdH.GetDat(RuleIdxPr.Val2);
+			TStr EffectStr = EffectCan.GetStr() + "=1";
+
+			// causes
+			const TIntV& CauseIdxV = RuleIdxPr.Val1;
+			TStrV CauseStrV(CauseIdxV.Len(),0);
+			for (int i = 0; i < CauseIdxV.Len(); i++) {
+				const TInt& CauseIdx = CauseIdxV[i];
+				const TInt& CanId = IdxCanIdH.GetDat(CauseIdx);
+
+				if (RuleEventCanIdIdxH.IsKey(CanId)) {
+					CauseStrV.Add(CanId.GetStr() + "=1");
+				} else {
+					int Interval = (CauseIdx - EventCanV.Len()) % 3;
+					if (Interval == 0) {
+						CauseStrV.Add(CanId.GetStr() + "=LOW");
+					} else if (Interval == 1) {
+						CauseStrV.Add(CanId.GetStr() + "=MEDIUM");
+					} else {
+						CauseStrV.Add(CanId.GetStr() + "=HIGH");
+					}
+				}
+			}
+
+			RuleV.Add(TPair<TStrV,TStr>(CauseStrV, EffectStr));
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to interpret rules!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::LoadStructs() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Initializing history...");
 
 	try {
 		TLock Lck(HistSection);
 
-		// get CAN IDs
-		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
-
-		for (int i = 0; i < KeyV.Len(); i++) {
-			const TInt& CanId = KeyV[i];
-			LoadHistForCan(CanId);
-		}
+		LoadHistV();
+		LoadRuleInstV();
+		LoadWaterLevelV();
 
 		Notify->OnNotify(TNotifyType::ntInfo, "History initialized!");
 	} catch (const PExcept& Except) {
@@ -229,50 +716,173 @@ void TDataProvider::InitHist() {
 	}
 }
 
-void TDataProvider::LoadHistForCan(const TInt& CanId) {
-	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Loading history for CAN: %d", CanId.Val);
+//void TDataProvider::LoadHistForCan(const TInt& CanId) {
+//	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Loading history for CAN: %d", CanId.Val);
+//
+//	try {
+//		TLock Lck(HistSection);
+//
+//		const TStr HistFName = TUtils::GetHistFName(CanId, DbPath);
+//		const TStr BackupFName = TUtils::GetHistBackupFName(CanId, DbPath);
+//
+//		bool Success = false;
+//
+//		if (TFile::Exists(HistFName)) {
+//			try {
+//				TFIn SIn(HistFName);
+//
+//				TUInt64FltKdV HistV(SIn);
+//				HistH.AddDat(CanId, HistV);
+//				Success = true;
+//			} catch (const PExcept& Except) {
+//				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading history for CAN: %d", CanId.Val);
+//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//			}
+//		}
+//		if (!Success && TFile::Exists(BackupFName)) {
+//			try {
+//				TFIn SIn(BackupFName);
+//
+//				TUInt64FltKdV HistV(SIn);
+//				HistH.AddDat(CanId, HistV);
+//				Success = true;
+//			} catch (const PExcept& Except) {
+//				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading backup history for CAN: %d", CanId.Val);
+//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//			}
+//		}
+//		if (!Success) {
+//			Notify->OnNotify(TNotifyType::ntInfo, "History doesn't exist or is corrupt! Creating new history vector...");
+//			TUInt64FltKdV HistV;
+//			HistH.AddDat(CanId, HistV);
+//
+//			PersistHistForCan(CanId);
+//		}
+//	} catch (const PExcept& Except) {
+//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to load history for CAN: %d", CanId.Val);
+//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//	}
+//}
+
+void TDataProvider::LoadHistV() {
+	Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::LoadHistV: Loading history...");
 
 	try {
 		TLock Lck(HistSection);
 
-		const TStr HistFName = GetHistFName(CanId);
-		const TStr BackupFName = GetHistBackupFName(CanId);
+		const TStr HistFName = TUtils::GetHistFName(DbPath);
+		const TStr BackupFName = TUtils::GetHistBackupFName(DbPath);
 
-		bool Success = false;
-
-		if (TFile::Exists(HistFName)) {
-			try {
-				TFIn SIn(HistFName);
-
-				TUInt64FltKdV HistV(SIn);
-				HistH.AddDat(CanId, HistV);
-				Success = true;
-			} catch (const PExcept& Except) {
-				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading history for CAN: %d", CanId.Val);
-				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-			}
-		}
-		if (!Success && TFile::Exists(BackupFName)) {
-			try {
-				TFIn SIn(BackupFName);
-
-				TUInt64FltKdV HistV(SIn);
-				HistH.AddDat(CanId, HistV);
-				Success = true;
-			} catch (const PExcept& Except) {
-				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading backup history for CAN: %d", CanId.Val);
-				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-			}
-		}
-		if (!Success) {
+		if (!TUtils::LoadStruct(HistFName, BackupFName, HistH, Notify)) {
 			Notify->OnNotify(TNotifyType::ntInfo, "History doesn't exist or is corrupt! Creating new history vector...");
-			TUInt64FltKdV HistV;
-			HistH.AddDat(CanId, HistV);
 
-			PersistHistForCan(CanId);
+			// get CAN IDs
+			TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+			HistH.Clr();
+
+			for (int i = 0; i < KeyV.Len(); i++) {
+				const TInt& CanId = KeyV[i];
+
+				HistH.AddDat(CanId, TUInt64FltKdV());
+			}
+
+			PersistHist();
 		}
 	} catch (const PExcept& Except) {
-		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to read history for CAN: %d", CanId.Val);
+		Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadHistV: Failed to load history!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::LoadRuleInstV() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Loading instances for learning rules...");
+
+	try {
+		TLock Lck(RuleSection);
+
+		const TStr RuleFNm = TUtils::GetRuleFName(DbPath);
+		const TStr BackupRuleFNm = TUtils::GetBackupRuleFName(DbPath);
+
+		if (!TUtils::LoadStruct(RuleFNm, BackupRuleFNm, RuleInstV, Notify)) {
+			Notify->OnNotify(TNotifyType::ntInfo, "Rule instances don't exist or are corrupt, leaving empty vector...");
+			PersistRuleInstV();
+		}
+//
+//		bool Success = false;
+//
+//		if (TFile::Exists(RuleFNm)) {
+//			try {
+//				TFIn SIn(RuleFNm);
+//				RuleInstV = TVec<TKeyDat<TUInt64,TFltV>>(SIn);
+//				Success = true;
+//			} catch (const PExcept& Except) {
+//				Notify->OnNotify(TNotifyType::ntErr, "An exception occurred while loading rule instances!");
+//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//			}
+//		}
+//		if (!Success && TFile::Exists(BackupRuleFNm)) {
+//			try {
+//				TFIn SIn(BackupRuleFNm);
+//				RuleInstV = TVec<TKeyDat<TUInt64,TFltV>>(SIn);
+//				Success = true;
+//			} catch (const PExcept& Except) {
+//				Notify->OnNotify(TNotifyType::ntErr, "An exception occurred while loading backup rule instances!");
+//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//			}
+//		}
+//		if (!Success) {
+//			Notify->OnNotify(TNotifyType::ntInfo, "Rule instances don't exist or are corrupt, leaving empty vector...");
+//			PersistRuleInstV();
+//		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to load instances for learning rules!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::LoadWaterLevelV() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Loading instances for predicting water level...");
+
+	try {
+		TLock Lck(HistSection);
+
+		const TStr WLevelFNm = TUtils::GetWaterLevelFNm(DbPath);
+		const TStr BackupWLevelFNm = TUtils::GetBackupWLevelFNm(DbPath);
+
+		if (!TUtils::LoadStruct(WLevelFNm, BackupWLevelFNm, WaterLevelV, Notify)) {
+			Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::LoadWaterLevelV: Water levels are missing or corrupt, loaded empty vector...");
+			PersistWaterLevelV();
+		}
+
+//		bool Success = false;
+//
+//		if (TFile::Exists(WLevelFNm)) {
+//			try {
+//				TFIn SIn(WLevelFNm);
+//				WaterLevelV = TUInt64FltPrV(SIn);
+//				Success = true;
+//			} catch (const PExcept& Except) {
+//				Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadWaterLevelV: An exception occurred while loading water levels!");
+//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//			}
+//		}
+//
+//		if (!Success && TFile::Exists(BackupWLevelFNm)) {
+//			try {
+//				TFIn SIn(BackupWLevelFNm);
+//				WaterLevelV = TUInt64FltPrV(SIn);
+//				Success = true;
+//			} catch (const PExcept& Except) {
+//				Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadWaterLevelV: An exception occurred while loading backup water levels!");
+//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//			}
+//		}
+//		if (!Success) {
+//			Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::LoadWaterLevelV: Water levels are missing or corrupt, loaded empty vector...");
+//			PersistWaterLevelV();
+//		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to load instances for predicting water level!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -283,14 +893,19 @@ void TDataProvider::PersistHist() {
 	try {
 		TLock Lock(HistSection);
 
-		// get CAN IDs
-		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+		const TStr HistFName = TUtils::GetHistFName(DbPath);
+		const TStr BackupFName = TUtils::GetHistBackupFName(DbPath);
 
-		// go through all CAN IDs and persist their history vectors
-		for (int i = 0; i < KeyV.Len(); i++) {
-			const TInt& CanId = KeyV[i];
-			PersistHistForCan(CanId);
-		}
+		TUtils::PersistStruct(HistFName, BackupFName, HistH, Notify);
+//
+//		// get CAN IDs
+//		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
+//
+//		// go through all CAN IDs and persist their history vectors
+//		for (int i = 0; i < KeyV.Len(); i++) {
+//			const TInt& CanId = KeyV[i];
+//			PersistHistForCan(CanId);
+//		}
 
 		Notify->OnNotify(TNotifyType::ntInfo, "History persisted!");
 	} catch (const PExcept& Except) {
@@ -299,30 +914,104 @@ void TDataProvider::PersistHist() {
 	}
 }
 
-void TDataProvider::PersistHistForCan(const TInt& CanId) {
+//void TDataProvider::PersistHistForCan(const TInt& CanId) {
+//	try {
+//		TLock Lck(HistSection);
+//
+//		const TStr HistFName = TUtils::GetHistFName(CanId, DbPath);
+//		const TStr BackupFName = TUtils::GetHistBackupFName(CanId, DbPath);
+//
+//		// save a new hist file
+//		TUInt64FltKdV& HistV = HistH.GetDat(CanId);
+//
+//		// delete the current file and create a new one
+//		if (TFile::Exists(HistFName)) {
+//			TFile::Del(HistFName);
+//		}
+//
+//		{
+//			TFOut Out(HistFName);
+//			HistV.Save(Out);
+//		}
+//
+//		// the new file is created, now create a new backup file
+//		// first remove the backup file
+//		if (TFile::Exists(BackupFName)) {
+//			TFile::Del(BackupFName);
+//		}
+//
+//		{
+//			TFOut Out(BackupFName);
+//			HistV.Save(Out);
+//		}
+//	} catch (const PExcept& Except) {
+//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to persist historyfor CAN: %d!", CanId);
+//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//	}
+//}
+
+void TDataProvider::PersistRuleInstV() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Persisting rules...");
+
+	try {
+		TLock Lck(RuleSection);
+
+		const TStr RuleFName = TUtils::GetRuleFName(DbPath);
+		const TStr BackupRuleFName = TUtils::GetBackupRuleFName(DbPath);
+
+		// remove the file and create a new file
+		if (TFile::Exists(RuleFName)) {
+			TFile::Del(RuleFName);
+		}
+
+		// save a new rule file
+		{
+			TFOut Out(RuleFName);
+			RuleInstV.Save(Out);
+		}
+
+		// the new file is created, now create a new backup file
+		// first remove the old backup file
+		if (TFile::Exists(BackupRuleFName)) {
+			TFile::Del(BackupRuleFName);
+		}
+
+		// save a new rule file
+		{
+			TFOut Out(BackupRuleFName);
+			RuleInstV.Save(Out);
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to persist rule instances!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::PersistWaterLevelV() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Persisting water levels...");
+
 	try {
 		TLock Lck(HistSection);
 
-		const TStr HistFName = GetHistFName(CanId);
-		const TStr BackupFName = GetHistBackupFName(CanId);
+		TUtils::PersistStruct(TUtils::GetWaterLevelFNm(DbPath), TUtils::GetBackupWLevelFNm(DbPath), WaterLevelV, Notify);
+//		const TStr WLevelFNm = TUtils::GetWaterLevelFNm(DbPath);
+//		const TStr BackupWLevelFNm = TUtils::GetBackupWLevelFNm(DbPath);
+//
+//		if (TFile::Exists(WLevelFNm)) {
+//			TFile::Del(WaterLevelFNm);
+//		}
+//
+//		// save a new file
+//		{
+//			TFOut SOut(WaterLevelFNm);
+//			WaterLevelV.Save(SOut);
+//		}
+//
+//		// the new file is created, now create a new backup file
+//		// first remove the old backup file
 
-		// first remove the backup file
-		if (TFile::Exists(BackupFName)) {
-			TFile::Del(BackupFName);
-		}
-
-		// rename the current hist file to backup
-		if (TFile::Exists(HistFName)) {
-			TFile::Rename(HistFName, BackupFName);
-		}
-
-		// save a new hist file
-		TUInt64FltKdV& HistV = HistH.GetDat(CanId);
-
-		TFOut Out(HistFName);
-		HistV.Save(Out);
 	} catch (const PExcept& Except) {
-		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to persist historyfor CAN: %d!", CanId);
+		Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::PersistWaterLevelV: Failed to persist water levels!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -500,7 +1189,9 @@ void TAdriaCommunicator::OnConnect(const uint64& SockId) {
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Connected socket: %lu, writing desired inputs...", SockId);
 
 	Write("PUSH res_table|GET history,prediction&qminer,qm1\r\n");
-	Write("GET res_table\r\n");										// refresh the table
+	Write("GET res_table\r\n");									// refresh the table
+
+	OnAdriaConnected();
 }
 
 void TAdriaCommunicator::OnRead(const uint64& SockId, const PSIn& SIn) {
@@ -639,6 +1330,19 @@ void TAdriaCommunicator::OnMsgReceived(const PAdriaMsg Msg) {
 	}
 }
 
+void TAdriaCommunicator::OnAdriaConnected() {
+	Notify->OnNotify(TNotifyType::ntInfo, "OnAdriaConnected called...");
+
+	try {
+		for (int i = 0; i < MsgCallbacks.Len(); i++) {
+			MsgCallbacks[i]->OnConnected();
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "An exception ocurred whole notifying connection!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
 void TAdriaCommunicator::AddOnMsgReceivedCallback(const PAdriaMsgCallback& Callback) {
 	TLock Lock(CallbackSection);
 
@@ -655,6 +1359,7 @@ TAdriaServer::TAdriaServer(const PSockEvent& _Communicator, TDataProvider& _Data
 
 	((TAdriaCommunicator*) Communicator())->AddOnMsgReceivedCallback(this);
 	DataProvider.SetPredictionCallback(this);
+	DataProvider.SetRulesGeneratedCallback(this);
 }
 
 void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
@@ -674,6 +1379,15 @@ void TAdriaServer::OnMsgReceived(const PAdriaMsg& Msg) {
 	}
 }
 
+void TAdriaServer::OnConnected() {
+	try {
+		DataProvider.OnConnected();
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to run TAdriaServer::OnConnected()");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
 void TAdriaServer::OnPrediction(const TInt& CanId, const TFlt& Val) {
 	try {
 		TStr ValStr = Val.GetStr();
@@ -685,6 +1399,55 @@ void TAdriaServer::OnPrediction(const TInt& CanId, const TFlt& Val) {
 		((TAdriaCommunicator*) Communicator())->Write(Msg);
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process prediction callback!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TAdriaServer::OnRulesGenerated(const TVec<TPair<TStrV,TStr>>& RuleV) {
+	try {
+		TChA RuleStr = "";
+		for (int RuleIdx = 0; RuleIdx < RuleV.Len(); RuleIdx++) {
+			const TStrV& CauseStrV = RuleV[RuleIdx].Val1;
+			const TStr& EffectStr = RuleV[RuleIdx].Val2;
+
+			RuleStr += "(";
+
+			// construct the causes
+			for (int CauseIdx = 0; CauseIdx < CauseStrV.Len(); CauseIdx++) {
+				RuleStr += CauseStrV[CauseIdx];
+				if (CauseIdx < CauseStrV.Len()-1) {
+					RuleStr += ',';
+				}
+			}
+
+			RuleStr += "=>";
+			RuleStr += EffectStr + ")";
+
+			if (RuleIdx < RuleV.Len()-1) {
+				RuleStr += ',';
+			}
+		}
+
+		// write the rules to a file
+		{
+			TChA DbPath = DataProvider.GetDbPath();
+
+			if (DbPath.LastCh() != '/') {
+				DbPath += '/';
+			}
+
+			DbPath += "rules.log";
+
+			TFOut FOut(DbPath, true);
+
+			TChA LogStr = TStr("\n==============================================\n") + RuleStr;
+			FOut.PutStr(LogStr);
+		}
+
+		TChA Msg = TChA("PUSH rules\r\nLength=") + TInt(RuleStr.Len()).GetStr() + "\r\n" + RuleStr + "\r\n";
+		((TAdriaCommunicator*) Communicator())->Write(Msg);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to process rules generated callback!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -725,7 +1488,7 @@ void TAdriaServer::ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH) 
 
 void TAdriaServer::ProcessPushTable(const PAdriaMsg& Msg) {
 	try {
-		TStr TimeStr = TTm::GetTmFromMSecs(TTm::GetCurUniMSecs()).GetWebLogDateTimeStr(true, "T");
+		TStr TimeStr = TAdriaUtils::TUtils::GetCurrTimeStr();
 
 		// parse the table
 		THash<TUInt, TFlt> CanIdValH;
