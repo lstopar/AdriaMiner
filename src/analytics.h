@@ -10,6 +10,7 @@
 namespace TAdriaAnalytics {
 
 using namespace TSignalProc;
+using namespace TAdriaUtils;
 
 //////////////////////////////////////////////////////////////
 // Support
@@ -64,9 +65,17 @@ public:
 	void Learn(const TFltV& FeatV, const TFlt& Val);
 	void Learn(const TVec<TFltV>& InstV, const TFltV& ValV);
 
+	const TRecLinReg& GetRegModel() { return LinReg; }
+
 private:
+	// loads the structures from disk
 	void LoadStructs();
+	// saves the structures to disk
 	void SaveStructs();
+	// initializes a default model
+	void InitDefaultModel();
+	// for logging the instances
+	void LogInstVValV(const TVec<TFltV>& InstV, const TFltV& ValV);
 };
 
 //===========================================================================================
@@ -95,6 +104,8 @@ void TApriori<TSupp,TConf>::Run(const TIntVV& EventMat, const TIntVV ObsMat,
 	Notify->OnNotify(TNotifyType::ntInfo, "Generating rules...");
 
 	TVec<TPair<TIntV,TInt>> TempRuleV;
+	TVec<TPair<TFlt,TPair<TIntV,TInt>>> PrintTempRuleV;	// TODO just for debugging
+
 	// generate rules
 	for (int ItemSetIdx = 0; ItemSetIdx < ItemSetV.Len(); ItemSetIdx++) {
 		TIntV& ItemSet = ItemSetV[ItemSetIdx];
@@ -117,6 +128,8 @@ void TApriori<TSupp,TConf>::Run(const TIntVV& EventMat, const TIntVV ObsMat,
 			}
 
 			EffectV.Add(EffectIdx);
+			double Conf = TConf::Conf(EventMat, ObsMat, CauseIdxV, EffectV);
+			PrintTempRuleV.Add(TPair<TFlt,TPair<TIntV,TInt>>(Conf, TPair<TIntV,TInt>(CauseIdxV, EffectIdx)));
 
 			// check if this rule has enough confidence
 			if (TConf::Conf(EventMat, ObsMat, CauseIdxV, EffectV) >= ConfThreshold) {
@@ -124,6 +137,8 @@ void TApriori<TSupp,TConf>::Run(const TIntVV& EventMat, const TIntVV ObsMat,
 			}
 		}
 	}
+
+	TUtils::PrintRuleCandV(PrintTempRuleV, Notify);
 
 	TVec<TIntV> ObsItemSetV;
 	GenFreqItems(ObsMat, SuppThreshold, MaxItems, ObsItemSetV, Notify);
@@ -176,6 +191,7 @@ void TApriori<TSupp,TConf>::GenFreqItems(const TIntVV& Mat, const double& SuppTh
 	const int NAttrs = Mat.GetCols();
 
 	ItemSetV.Gen(MaxItems,0);
+	TVec<TPair<TFlt, TIntV>> ItemSetSuppV(MaxItems, 0);	// TODO just for debugging
 
 	// frequent item sets of size 1
 	TVec<TIntV> PrevFreqItems(NAttrs,0);
@@ -198,8 +214,11 @@ void TApriori<TSupp,TConf>::GenFreqItems(const TIntVV& Mat, const double& SuppTh
 		TVec<TIntV> FreqItemsK(FreqItemsCand.Len(),0);
 		for (int i = 0; i < FreqItemsCand.Len(); i++) {
 			TIntV& Cand = FreqItemsCand[i];
-			if (TSupp::Supp(Mat, Cand) >= SuppThreshold) {
+
+			double Supp = TSupp::Supp(Mat, Cand);
+			if (Supp >= SuppThreshold) {
 				FreqItemsK.Add(Cand);
+				ItemSetSuppV.Add(TPair<TFlt, TIntV>(Supp, Cand));	// TODO just for debugging
 			}
 		}
 
@@ -215,7 +234,7 @@ void TApriori<TSupp,TConf>::GenFreqItems(const TIntVV& Mat, const double& SuppTh
 		k++;
 	}
 
-
+	TUtils::PrintItemSetV(ItemSetSuppV, Notify);	// TODO just for debugging
 }
 
 template <class TSupp, class TConf>

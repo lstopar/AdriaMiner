@@ -83,6 +83,7 @@ const int TLinRegWrapper::FeatDim = 2;
 TLinRegWrapper::TLinRegWrapper(const TStr& _DbPath, const PNotify& _Notify):
 		DbPath(_DbPath),
 		LinReg(),
+		DataSection(cstRecursive),
 		Notify(_Notify) {
 	LoadStructs();
 }
@@ -92,8 +93,13 @@ double TLinRegWrapper::Predict(const TFltV& Sample) {
 }
 
 void TLinRegWrapper::Learn(const TFltV& Sample, const TFlt& Val) {
-	LinReg.Learn(Sample, Val);
-	SaveStructs();
+	TVec<TFltV> InstV;
+	TFltV ValV;
+
+	InstV.Add(Sample);
+	ValV.Add(Val);
+
+	Learn(InstV, ValV);
 }
 
 void TLinRegWrapper::Learn(const TVec<TFltV>& InstV, const TFltV& ValV) {
@@ -107,6 +113,7 @@ void TLinRegWrapper::Learn(const TVec<TFltV>& InstV, const TFltV& ValV) {
 			LinReg.Learn(InstV[i], ValV[i]);
 		}
 
+		LogInstVValV(InstV, ValV);
 		SaveStructs();
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TLinRegWrapper::Learn: Failed to learn instances!");
@@ -122,8 +129,10 @@ void TLinRegWrapper::LoadStructs() {
 		const TStr BackupFNm = TAdriaUtils::TUtils::GetBackupWaterLevelRegFNm(DbPath);
 
 		if (!TUtils::LoadStruct(FNm, BackupFNm, LinReg, Notify)) {
-			Notify->OnNotify(TNotifyType::ntWarn, "TLinRegWrapper::LoadStructs: Failed to load linreg model! Creating empty model...");
-			LinReg = TRecLinReg(FeatDim, RegFact, ForgetFact);
+			Notify->OnNotify(TNotifyType::ntWarn, "TLinRegWrapper::LoadStructs: Failed to load linreg model! Creating default model...");
+
+			InitDefaultModel();
+			SaveStructs();
 		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TLinRegWrapper::LoadStructs: Failed to load structures!");
@@ -141,6 +150,42 @@ void TLinRegWrapper::SaveStructs() {
 		TUtils::PersistStruct(FNm, BackupFNm, LinReg, Notify);
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TLinRegWrapper::SaveStructs: Failed to save structures!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TLinRegWrapper::InitDefaultModel() {
+	try {
+		TFltV Wgts;
+		Wgts.Add(1.101491169989339);
+		Wgts.Add(-0.035451271447368);
+
+		TFltVV P(TLinRegWrapper::FeatDim, TLinRegWrapper::FeatDim);
+		P.PutXY(0, 0, 0.316484968010463);	P.PutXY(0, 1, -0.004930254923017);
+		P.PutXY(1, 0, -0.004930254923017);	P.PutXY(1, 1, 0.000083217571561);
+
+		LinReg = TRecLinReg(Wgts, P, TLinRegWrapper::ForgetFact, TLinRegWrapper::RegFact);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "TLinRegWrapper::InitDefaultModel: Failed to initialize model!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TLinRegWrapper::LogInstVValV(const TVec<TFltV>& InstV, const TFltV& ValV) {
+	try {
+		TLock Lck(DataSection);
+
+		const TStr FNm = TUtils::GetWaterLevelInstancesLogFNm(DbPath);
+		const int NInst = InstV.Len();
+
+		TFOut SOut(FNm, true);
+
+		for (int i = 0; i < NInst; i++) {
+			TStr InstStr = TStrUtil::GetStr(InstV[i], ",");
+			SOut.PutStrFmt("%s,%s\n", InstStr.CStr(), ValV[i].GetStr().CStr());
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "TLinRegWrapper::InitDefaultModel: Failed to log instances!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }

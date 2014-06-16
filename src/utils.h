@@ -24,6 +24,10 @@ public:
 	static TStr GetBackupWLevelFNm(const TStr& DbPath) { return DbPath + "/water_level-backup.bin"; }
 	static TStr GetWaterLevelRegFNm(const TStr& DbPath) { return DbPath + "/models/water_level-predict.bin"; }
 	static TStr GetBackupWaterLevelRegFNm(const TStr& DbPath) { return DbPath + "/models/water_level-predict-backup.bin"; }
+	static TStr GetWaterLevelInstancesLogFNm(const TStr& DbPath) { return DbPath + "/water_level.log"; }
+
+	static void PrintItemSetV(const TVec<TPair<TFlt, TIntV>>& ItemSetSuppV, const PNotify& Notify);
+	static void PrintRuleCandV(const TVec<TPair<TFlt,TPair<TIntV,TInt>>>& RuleCandV, const PNotify& Notify);
 
 	// persist
 	template <class TStruct>
@@ -140,9 +144,7 @@ private:
 	PNotify Notify;
 
 public:
-	TAdriaMsg(const PNotify& _Notify=TStdNotify::New()):
-		Buff(400), Method(TAdriaMsgMethod::ammNone), Command(TStr()),
-		Params(TStr()), Length(-1), IsLastReadEol(true), Notify(_Notify) {}
+	TAdriaMsg(const PNotify& _Notify=TStdNotify::New());
 
 	static PAdriaMsg New(const PNotify& Notify=TStdNotify::New()) { return new TAdriaMsg(Notify); }
 

@@ -68,6 +68,7 @@ private:
 	static TIntStrH CanIdVarNmH;
 	static TIntSet PredCanSet;
 	static uint64 HistDur;
+	static uint64 RuleWindowTm;
 	static int EntryTblLen;
 	static bool FillCanHs();
 	static bool Init;
@@ -108,10 +109,12 @@ public:
 	void AddRec(const int& CanId, const PJsonVal& Rec);
 	// adds the current state to the table used for learning rules
 	void AddRuleInstance(const int& CanId);
+	void DelOldRuleInst();
 	// returns the history of the sensor with the given CAN ID
 	void GetHistory(const int& CanId, TUInt64FltKdV& HistoryV);
 	// predicts when the fresh water will be empty
 	void PredictWaterLevel();
+	void LearnWaterLevel();
 
 	void SetPredictionCallback(TPredictionCallback* Callback) { PredictionCallback = Callback; }
 	void SetRulesGeneratedCallback(TRulesGeneratedCallback* Callback) { RulesCallback = Callback; }
@@ -259,7 +262,7 @@ public:
 	static PAdriaApp New(const PSockEvent& _Communicator, TDataProvider& _DataProvider, const PNotify& _Notify = TStdNotify::New())
 		{ return new TAdriaApp(_Communicator, _DataProvider, _Notify); }
 
-	~TAdriaApp() {}
+	virtual ~TAdriaApp() {}
 
 public:
 	void OnMsgReceived(const PAdriaMsg& Msg);

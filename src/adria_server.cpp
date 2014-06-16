@@ -43,6 +43,7 @@ void TDataProvider::TSampleHistThread::Run() {
 
 			if (LoopIdx % (SleepTm / SampleWaterLevelTm) == 0) {
 				DataProvider->SampleHist();
+				DataProvider->LearnWaterLevel();
 				DataProvider->MakePredictions();
 				LoopIdx = 0;
 			}
@@ -61,7 +62,7 @@ void TDataProvider::TSampleHistThread::Run() {
 /////////////////////////////////////////////////////////////////////
 // TRuleThread
 //uint64 TDataProvider::TRuleThread::SleepTm = 1000*60*60*30;	// 30 mins
-uint64 TDataProvider::TRuleThread::SleepTm = 1000*60*1;	// 1min
+uint64 TDataProvider::TRuleThread::SleepTm = 1000*60*10;	// 10min
 
 TDataProvider::TRuleThread::TRuleThread(TDataProvider* Provider, const PNotify& _Notify):
 		DataProvider(Provider),
@@ -80,9 +81,10 @@ void TDataProvider::TRuleThread::Run() {
 			uint64 StartTm = TUtils::GetCurrTimeStamp();
 			Notify->OnNotify(TNotifyType::ntInfo, "Starting rule loop...");
 
+			DataProvider->DelOldRuleInst();
 			DataProvider->PersistRuleInstV();
 
-			if (Count++ % 5 == 0) {
+			if (Count++ % 3 == 0) {
 				DataProvider->GenRules();
 			}
 
@@ -103,6 +105,7 @@ void TDataProvider::TRuleThread::Run() {
 /////////////////////////////////////////////////////////////////////
 // Data handler
 uint64 TDataProvider::HistDur = 1000*60*60*24*7;	// one week
+uint64 TDataProvider::RuleWindowTm = 1000*60*60*24*3;	// 3 days
 int TDataProvider::EntryTblLen = 256;
 TIntStrH TDataProvider::CanIdVarNmH;
 
@@ -163,7 +166,7 @@ TDataProvider::TDataProvider(const TStr& _DbPath, const PNotify& _Notify):
 		HistH(),
 		RuleInstV(),
 		WaterLevelV(),
-		WaterLevelReg(DbPath, Notify),
+		WaterLevelReg(DbPath, _Notify),
 		HistThread(),
 		RuleThread(),
 		DataSection(TCriticalSectionType::cstRecursive),
@@ -235,6 +238,28 @@ void TDataProvider::AddRuleInstance(const int& CanId) {
 	}
 }
 
+void TDataProvider::DelOldRuleInst() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Deleting old rule instances...");
+
+	try {
+		TLock Lck(RuleSection);
+		uint64 OldestTm = TUtils::GetCurrTimeStamp() - TDataProvider::RuleWindowTm;
+
+		int StartRuleIdx = 0;
+		while (StartRuleIdx < RuleInstV.Len() && RuleInstV[StartRuleIdx].Key < OldestTm) {
+			StartRuleIdx++;
+		}
+
+		if (StartRuleIdx > 0) {
+			RuleInstV.Del(0, StartRuleIdx-1);
+			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Deleted %d instances...", StartRuleIdx);
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::DelOldRuleInst: Failed to delete old rule instances!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
 void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Fetching history for CAN: %d", CanId);
 
@@ -253,13 +278,38 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 }
 
 void TDataProvider::PredictWaterLevel() {
-	Notify->OnNotify(TNotifyType::ntInfo, "Predicting fresh water level...");
+	const double Level0 = 5;
 
 	try {
-		const int LevelIdx = 0;
-		const int MAIdx = 1;
-		const int DerivIdx = 2;
+		double CurrLevel = EntryTbl[TUtils::FreshWaterCanId];
 
+		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Predicting fresh water level. Current level: %.2f", CurrLevel);
+
+		TFltV FeatV;
+		FeatV.Add(1); FeatV.Add(CurrLevel);
+
+		const TRecLinReg& LinReg = WaterLevelReg.GetRegModel();
+		TFltV Wgts;	LinReg.GetCoeffs(Wgts);
+
+		double Beta0 = Wgts[0];
+		double Beta1 = Wgts[1];
+
+		//pred = exp(beta_0)*(exp(beta_1*L)-exp(beta_1*L_0))/beta_1
+		double Pred = exp(Beta0)*(exp(Beta1*CurrLevel) - exp(Beta1*Level0)) / Beta1;
+
+		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Predicted: %.2f", Pred);
+
+		PredictionCallback->OnPrediction(TUtils::FreshWaterCanId, Pred);
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWaterLevel: Failed to make a prediction!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::LearnWaterLevel() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Updating fresh water level model...");
+
+	try {
 		const double MillisToHours = 1.0/(60*60*1000);
 
 		TFltV MaV;
@@ -269,6 +319,7 @@ void TDataProvider::PredictWaterLevel() {
 
 		const int MaWindowLen = 2*1200 / TSampleHistThread::SampleWaterLevelTm;
 
+		// copy the reading into another list and operate on them from there
 		int NInst;
 		{
 			TLock Lck(HistSection);
@@ -304,6 +355,7 @@ void TDataProvider::PredictWaterLevel() {
 			}
 		}
 
+		// compute where the water is being filled
 		const double FillThreshold = 6;
 		const double DerivThreshold = .5;
 
@@ -336,8 +388,9 @@ void TDataProvider::PredictWaterLevel() {
 
 		IsFilling = false;
 		int FirstIdx = -1;
+		int LastIdx = -1;
 
-		// generate new instances
+		// generate instances for linear regression
 		TVec<TFltV> InstV;
 		TFltV ValV;
 
@@ -348,7 +401,7 @@ void TDataProvider::PredictWaterLevel() {
 				IsFilling = false;
 			}
 			else if (!IsFilling && IsFillingV[i]) {	// stopped being steady
-				int LastIdx = i-1;
+				LastIdx = i-1;
 				IsFilling = true;
 
 				double CurrLevel = MaV[FirstIdx];
@@ -359,55 +412,26 @@ void TDataProvider::PredictWaterLevel() {
 
 				double Deriv = DeltaTm / DeltaLevel;
 
-				TFltV FeatV; FeatV.Add(1); FeatV.Add(Deriv);
+				TFltV FeatV; FeatV.Add(1); FeatV.Add(CurrLevel);
 				InstV.Add(FeatV);
-				ValV.Add(Deriv);
+				ValV.Add(log(Deriv));
 			}
 		}
 
 		// incorporate the new instances into the current model
 		WaterLevelReg.Learn(InstV, ValV);
+
+		// delete the unused stuff
+		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Deleting water %d level instances...", LastIdx);
+		if (LastIdx > 0) {
+			TLock Lck(HistSection);
+			WaterLevelV.Del(0, LastIdx-1);
+		}
 	} catch (const PExcept& Except) {
-		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWaterLevel: Failed to make a prediction!");
+		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::LearnWaterLevel: Failed to update the model!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
-
-//void TDataProvider::PredictByCan(const int& CanId) {
-//	try {
-//		TUInt64FltKdV HistV;	GetHistory(CanId, HistV);
-//
-//		double DValSum = 0.0;
-//		double DtSum = 0.0;
-//		int DropCount = 0;
-//
-//		TUInt64FltKd* PrevTmValKd = NULL;
-//		const int NHist = HistV.Len();
-//		for (int i = NHist-1; i >= 0; i--) {
-//			TUInt64FltKd* CurrTmValKd = &HistV[i];
-//
-//			if (PrevTmValKd != NULL && CurrTmValKd->Dat <= PrevTmValKd->Dat * 1.05 /* threshold */) {
-//				double Dt = double(CurrTmValKd->Key - PrevTmValKd->Key) / (1000*60*60);	// dt in hours
-//				double DVal = CurrTmValKd->Dat - PrevTmValKd->Dat;
-//
-//				DValSum += DVal;
-//				DtSum += Dt;
-//				DropCount++;
-//			}
-//
-//			PrevTmValKd = CurrTmValKd;
-//		}
-//
-//		double DValAvg = DValSum / DtSum;
-//		double CurrVal = EntryTbl[CanId];
-//
-//		double HoursLeft = -CurrVal / DValAvg;
-//		PredictionCallback->OnPrediction(CanId, HoursLeft);
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to make a prediction for CAN: %d", CanId);
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
 
 
 void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
@@ -469,7 +493,7 @@ void TDataProvider::SampleHist() {
 }
 
 void TDataProvider::SampleWaterLevel() {
-	Notify->OnNotify(TNotifyType::ntInfo, "Adding current state to history...");
+	Notify->OnNotify(TNotifyType::ntInfo, "Sampling fresh water level...");
 
 	try {
 
@@ -493,6 +517,8 @@ void TDataProvider::MakePredictions() {
 void TDataProvider::GenRules() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Generating rules...");
 
+	const int MinRuleInst = 20;
+
 	try {
 		// put all the instances into a different vector and
 		// operate on them from there
@@ -503,8 +529,8 @@ void TDataProvider::GenRules() {
 			Notify->OnNotify(TNotifyType::ntInfo, "Copying instances...");
 			TLock Lck(RuleSection);
 
-			if (RuleInstV.Empty()) {
-				Notify->OnNotify(TNotifyType::ntInfo, "No instances for generating rules present, returning...");
+			if (RuleInstV.Len() < MinRuleInst) {
+				Notify->OnNotifyFmt(TNotifyType::ntInfo, "Only %d instances for generating rules present, returning...", RuleInstV.Len());
 				return;
 			}
 
@@ -529,8 +555,8 @@ void TDataProvider::GenRules() {
 		}
 
 		// run the APRIORI algorithm
-		double MinSupp = .8;
-		double MinConf = .8;
+		double MinSupp = .7;
+		double MinConf = .7;
 		int MaxItems = 3;
 
 		TIntVV EventMat;
@@ -985,22 +1011,6 @@ void TDataProvider::PersistWaterLevelV() {
 		TLock Lck(HistSection);
 
 		TUtils::PersistStruct(TUtils::GetWaterLevelFNm(DbPath), TUtils::GetBackupWLevelFNm(DbPath), WaterLevelV, Notify);
-//		const TStr WLevelFNm = TUtils::GetWaterLevelFNm(DbPath);
-//		const TStr BackupWLevelFNm = TUtils::GetBackupWLevelFNm(DbPath);
-//
-//		if (TFile::Exists(WLevelFNm)) {
-//			TFile::Del(WaterLevelFNm);
-//		}
-//
-//		// save a new file
-//		{
-//			TFOut SOut(WaterLevelFNm);
-//			WaterLevelV.Save(SOut);
-//		}
-//
-//		// the new file is created, now create a new backup file
-//		// first remove the old backup file
-
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::PersistWaterLevelV: Failed to persist water levels!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
@@ -1319,7 +1329,7 @@ void TAdriaApp::ParseTable(const TChA& Table, THash<TUInt, TFlt>& CanIdValH) {
 			Val = *((float*) (Table.CStr() + StartIdx + 2));
 			break;
 		} default: {
-			throw TExcept::New("Invalid type!!");
+			throw TExcept::New("Invalid type of measurement!!");
 		}
 		}
 
@@ -1335,6 +1345,7 @@ void TAdriaApp::ProcessPushTable(const PAdriaMsg& Msg) {
 		// parse the table
 		THash<TUInt, TFlt> CanIdValH;
 		const TChA& Table = Msg->GetContent();
+
 		ParseTable(Table, CanIdValH);
 
 		TUIntV KeyV;	CanIdValH.GetKeyV(KeyV);

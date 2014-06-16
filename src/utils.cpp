@@ -6,6 +6,40 @@ using namespace TAdriaUtils;
 // TUtils
 const int TUtils::FreshWaterCanId = 108;
 
+void TUtils::PrintItemSetV(const TVec<TPair<TFlt, TIntV>>& ItemSetSuppV, const PNotify& Notify) {
+	try {
+		Notify->OnNotify(TNotifyType::ntInfo, "Printing frequent itemsets...");
+
+		const int NItems = ItemSetSuppV.Len();
+
+		for (int i = 0; i < NItems; i++) {
+			const TPair<TFlt, TIntV>& Item = ItemSetSuppV[i];
+			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Supp: %.2f, itemset: %s", Item.Val1.Val, TStrUtil::GetStr(Item.Val2, ",").CStr());
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "TUtils::PrintItemSetV: failed to print frequent itemsets!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TUtils::PrintRuleCandV(const TVec<TPair<TFlt,TPair<TIntV,TInt>>>& RuleCandV, const PNotify& Notify) {
+	try {
+		Notify->OnNotify(TNotifyType::ntInfo, "Printing rule candidates...");
+
+		const int NItems = RuleCandV.Len();
+
+		for (int i = 0; i < NItems; i++) {
+			const TPair<TFlt,TPair<TIntV,TInt>>& RuleCand = RuleCandV[i];
+
+			TStr CauseStr = TStrUtil::GetStr(RuleCand.Val2.Val1, ",");
+
+			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Conf: %.2f rule: %s -> %d", RuleCand.Val1.Val, CauseStr.CStr(), RuleCand.Val2.Val2.Val);
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "TUtils::PrintRuleCandV: failed to print rule candidates!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
 
 ////////////////////////////////////////////////////
 // TAdriaMsg
@@ -18,6 +52,16 @@ const TChA TAdriaMsg::HISTORY = "history";
 const TChA TAdriaMsg::PREDICTION = "prediction";
 
 const int TAdriaMsg::BYTES_PER_EL = 6;
+
+TAdriaMsg::TAdriaMsg(const PNotify& _Notify):
+		Buff(600),
+		Method(TAdriaMsgMethod::ammNone),
+		Command(TStr()),
+		Params(TStr()),
+		Length(-1),
+		Content(400),
+		IsLastReadEol(true),
+		Notify(_Notify) {}
 
 bool TAdriaMsg::IsComplete() const {
 	if (!IsLastReadEol) { return false; }
@@ -113,9 +157,15 @@ void TAdriaMsg::Read(const PSIn& SIn) {
 		TStr LenStr = LineBuff.GetSubStr(7, LineBuff.Len());
 		Length = LenStr.GetInt();
 
-		// parse the content
-		for (int i = 0; i < Length; i++) {
-			Content += SIn->GetCh();
+		// read the content
+		int i = 0;
+		while (i++ < Length && !SIn->Eof()) {
+			char Ch = SIn->GetCh();
+			Content.AddCh(Ch);
+		}
+
+		if (i < Length) {
+			Notify->OnNotifyFmt(ntWarn, "Failed to read whole message. %d characters missing!", Length-i);
 		}
 
 		// newline at the end
