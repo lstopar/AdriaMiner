@@ -5,6 +5,7 @@ using namespace TAdriaUtils;
 ////////////////////////////////////////////////////
 // TUtils
 const int TUtils::FreshWaterCanId = 108;
+const int TUtils::WasteWaterCanId = 109;
 
 void TUtils::PrintItemSetV(const TVec<TPair<TFlt, TIntV>>& ItemSetSuppV, const PNotify& Notify) {
 	try {

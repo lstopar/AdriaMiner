@@ -43,7 +43,7 @@ void TDataProvider::TSampleHistThread::Run() {
 
 			if (LoopIdx % (SleepTm / SampleWaterLevelTm) == 0) {
 				DataProvider->SampleHist();
-				DataProvider->LearnWaterLevel();
+				DataProvider->LearnFreshWaterLevel();
 				DataProvider->MakePredictions();
 				LoopIdx = 0;
 			}
@@ -277,8 +277,8 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 	}
 }
 
-void TDataProvider::PredictWaterLevel() {
-	const double Level0 = 5;
+double TDataProvider::PredictFreshWaterLevel() {
+	const double Level0 = 0;
 
 	try {
 		double CurrLevel = EntryTbl[TUtils::FreshWaterCanId];
@@ -300,13 +300,30 @@ void TDataProvider::PredictWaterLevel() {
 		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Predicted: %.2f", Pred);
 
 		PredictionCallback->OnPrediction(TUtils::FreshWaterCanId, Pred);
+
+		return Pred;
 	} catch (const PExcept& Except) {
-		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWaterLevel: Failed to make a prediction!");
+		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictFreshWaterLevel: Failed to make a prediction!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+		return 0;
 	}
 }
 
-void TDataProvider::LearnWaterLevel() {
+double TDataProvider::PredictWasteWaterLevel() {
+	try {
+		Notify->OnNotify(TNotifyType::ntInfo, "Predicting waste water level...");
+
+		double FreshWaterPred = PredictFreshWaterLevel();
+		PredictionCallback->OnPrediction(TUtils::WasteWaterCanId, FreshWaterPred);
+		return FreshWaterPred;
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWasteWaterLevel: Failed to make a prediction!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+		return 0;
+	}
+}
+
+void TDataProvider::LearnFreshWaterLevel() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Updating fresh water level model...");
 
 	try {
@@ -507,7 +524,8 @@ void TDataProvider::MakePredictions() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Making predictions and distributing...");
 
 	try {
-		PredictWaterLevel();
+		PredictFreshWaterLevel();
+		PredictWasteWaterLevel();
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to make predictions!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
@@ -824,33 +842,6 @@ void TDataProvider::LoadRuleInstV() {
 			Notify->OnNotify(TNotifyType::ntInfo, "Rule instances don't exist or are corrupt, leaving empty vector...");
 			PersistRuleInstV();
 		}
-//
-//		bool Success = false;
-//
-//		if (TFile::Exists(RuleFNm)) {
-//			try {
-//				TFIn SIn(RuleFNm);
-//				RuleInstV = TVec<TKeyDat<TUInt64,TFltV>>(SIn);
-//				Success = true;
-//			} catch (const PExcept& Except) {
-//				Notify->OnNotify(TNotifyType::ntErr, "An exception occurred while loading rule instances!");
-//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//			}
-//		}
-//		if (!Success && TFile::Exists(BackupRuleFNm)) {
-//			try {
-//				TFIn SIn(BackupRuleFNm);
-//				RuleInstV = TVec<TKeyDat<TUInt64,TFltV>>(SIn);
-//				Success = true;
-//			} catch (const PExcept& Except) {
-//				Notify->OnNotify(TNotifyType::ntErr, "An exception occurred while loading backup rule instances!");
-//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//			}
-//		}
-//		if (!Success) {
-//			Notify->OnNotify(TNotifyType::ntInfo, "Rule instances don't exist or are corrupt, leaving empty vector...");
-//			PersistRuleInstV();
-//		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to load instances for learning rules!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
@@ -870,34 +861,6 @@ void TDataProvider::LoadWaterLevelV() {
 			Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::LoadWaterLevelV: Water levels are missing or corrupt, loaded empty vector...");
 			PersistWaterLevelV();
 		}
-
-//		bool Success = false;
-//
-//		if (TFile::Exists(WLevelFNm)) {
-//			try {
-//				TFIn SIn(WLevelFNm);
-//				WaterLevelV = TUInt64FltPrV(SIn);
-//				Success = true;
-//			} catch (const PExcept& Except) {
-//				Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadWaterLevelV: An exception occurred while loading water levels!");
-//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//			}
-//		}
-//
-//		if (!Success && TFile::Exists(BackupWLevelFNm)) {
-//			try {
-//				TFIn SIn(BackupWLevelFNm);
-//				WaterLevelV = TUInt64FltPrV(SIn);
-//				Success = true;
-//			} catch (const PExcept& Except) {
-//				Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::LoadWaterLevelV: An exception occurred while loading backup water levels!");
-//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//			}
-//		}
-//		if (!Success) {
-//			Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::LoadWaterLevelV: Water levels are missing or corrupt, loaded empty vector...");
-//			PersistWaterLevelV();
-//		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to load instances for predicting water level!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
@@ -914,15 +877,6 @@ void TDataProvider::PersistHist() {
 		const TStr BackupFName = TUtils::GetHistBackupFName(DbPath);
 
 		TUtils::PersistStruct(HistFName, BackupFName, HistH, Notify);
-//
-//		// get CAN IDs
-//		TIntV KeyV;	TDataProvider::CanIdVarNmH.GetKeyV(KeyV);
-//
-//		// go through all CAN IDs and persist their history vectors
-//		for (int i = 0; i < KeyV.Len(); i++) {
-//			const TInt& CanId = KeyV[i];
-//			PersistHistForCan(CanId);
-//		}
 
 		Notify->OnNotify(TNotifyType::ntInfo, "History persisted!");
 	} catch (const PExcept& Except) {
@@ -930,42 +884,6 @@ void TDataProvider::PersistHist() {
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
-
-//void TDataProvider::PersistHistForCan(const TInt& CanId) {
-//	try {
-//		TLock Lck(HistSection);
-//
-//		const TStr HistFName = TUtils::GetHistFName(CanId, DbPath);
-//		const TStr BackupFName = TUtils::GetHistBackupFName(CanId, DbPath);
-//
-//		// save a new hist file
-//		TUInt64FltKdV& HistV = HistH.GetDat(CanId);
-//
-//		// delete the current file and create a new one
-//		if (TFile::Exists(HistFName)) {
-//			TFile::Del(HistFName);
-//		}
-//
-//		{
-//			TFOut Out(HistFName);
-//			HistV.Save(Out);
-//		}
-//
-//		// the new file is created, now create a new backup file
-//		// first remove the backup file
-//		if (TFile::Exists(BackupFName)) {
-//			TFile::Del(BackupFName);
-//		}
-//
-//		{
-//			TFOut Out(BackupFName);
-//			HistV.Save(Out);
-//		}
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to persist historyfor CAN: %d!", CanId);
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
 
 void TDataProvider::PersistRuleInstV() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Persisting rules...");
@@ -1424,7 +1342,9 @@ void TAdriaApp::ProcessGetPrediction(const PAdriaMsg& Msg) {
 		const TInt CanId = TStr(Msg->GetParams()).GetInt();
 
 		if (CanId == TUtils::FreshWaterCanId) {	// fresh water level
-			DataProvider.PredictWaterLevel();
+			DataProvider.PredictFreshWaterLevel();
+		} else if (CanId == TUtils::WasteWaterCanId) {
+			DataProvider.PredictWasteWaterLevel();
 		} else {
 			// no other predictions are implemented yet
 			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Invalid CAN for predictions: %d", CanId.Val);

@@ -112,9 +112,15 @@ public:
 	void DelOldRuleInst();
 	// returns the history of the sensor with the given CAN ID
 	void GetHistory(const int& CanId, TUInt64FltKdV& HistoryV);
+
+	// predictions
 	// predicts when the fresh water will be empty
-	void PredictWaterLevel();
-	void LearnWaterLevel();
+	double PredictFreshWaterLevel();
+	// predicts when the waste water will be full
+	double PredictWasteWaterLevel();
+
+	// update fresh water prediction model
+	void LearnFreshWaterLevel();
 
 	void SetPredictionCallback(TPredictionCallback* Callback) { PredictionCallback = Callback; }
 	void SetRulesGeneratedCallback(TRulesGeneratedCallback* Callback) { RulesCallback = Callback; }
@@ -264,7 +270,6 @@ public:
 
 	virtual ~TAdriaApp() {}
 
-public:
 	void OnMsgReceived(const PAdriaMsg& Msg);
 	void OnConnected();
 	void OnPrediction(const TInt& CanId, const TFlt& Val);

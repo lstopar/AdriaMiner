@@ -10,6 +10,7 @@ namespace TAdriaUtils {
 class TUtils {
 public:
 	const static int FreshWaterCanId;
+	const static int WasteWaterCanId;
 
 	static uint64 GetCurrTimeStamp();
 	static TStr GetCurrTimeStr();
