@@ -17,6 +17,8 @@ void TUtils::PrintItemSetV(const TVec<TPair<TFlt, TIntV>>& ItemSetSuppV, const P
 			const TPair<TFlt, TIntV>& Item = ItemSetSuppV[i];
 			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Supp: %.2f, itemset: %s", Item.Val1.Val, TStrUtil::GetStr(Item.Val2, ",").CStr());
 		}
+
+		Notify->OnNotify(TNotifyType::ntInfo, "Done.");
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TUtils::PrintItemSetV: failed to print frequent itemsets!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
@@ -36,6 +38,8 @@ void TUtils::PrintRuleCandV(const TVec<TPair<TFlt,TPair<TIntV,TInt>>>& RuleCandV
 
 			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Conf: %.2f rule: %s -> %d", RuleCand.Val1.Val, CauseStr.CStr(), RuleCand.Val2.Val2.Val);
 		}
+
+		Notify->OnNotify(TNotifyType::ntInfo, "Done.");
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TUtils::PrintRuleCandV: failed to print rule candidates!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());

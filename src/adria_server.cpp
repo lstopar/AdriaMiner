@@ -751,54 +751,6 @@ void TDataProvider::LoadStructs() {
 	}
 }
 
-//void TDataProvider::LoadHistForCan(const TInt& CanId) {
-//	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Loading history for CAN: %d", CanId.Val);
-//
-//	try {
-//		TLock Lck(HistSection);
-//
-//		const TStr HistFName = TUtils::GetHistFName(CanId, DbPath);
-//		const TStr BackupFName = TUtils::GetHistBackupFName(CanId, DbPath);
-//
-//		bool Success = false;
-//
-//		if (TFile::Exists(HistFName)) {
-//			try {
-//				TFIn SIn(HistFName);
-//
-//				TUInt64FltKdV HistV(SIn);
-//				HistH.AddDat(CanId, HistV);
-//				Success = true;
-//			} catch (const PExcept& Except) {
-//				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading history for CAN: %d", CanId.Val);
-//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//			}
-//		}
-//		if (!Success && TFile::Exists(BackupFName)) {
-//			try {
-//				TFIn SIn(BackupFName);
-//
-//				TUInt64FltKdV HistV(SIn);
-//				HistH.AddDat(CanId, HistV);
-//				Success = true;
-//			} catch (const PExcept& Except) {
-//				Notify->OnNotifyFmt(TNotifyType::ntErr, "An exception occurred while reading backup history for CAN: %d", CanId.Val);
-//				Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//			}
-//		}
-//		if (!Success) {
-//			Notify->OnNotify(TNotifyType::ntInfo, "History doesn't exist or is corrupt! Creating new history vector...");
-//			TUInt64FltKdV HistV;
-//			HistH.AddDat(CanId, HistV);
-//
-//			PersistHistForCan(CanId);
-//		}
-//	} catch (const PExcept& Except) {
-//		Notify->OnNotifyFmt(TNotifyType::ntErr, "Failed to load history for CAN: %d", CanId.Val);
-//		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
-//	}
-//}
-
 void TDataProvider::LoadHistV() {
 	Notify->OnNotify(TNotifyType::ntInfo, "TDataProvider::LoadHistV: Loading history...");
 
@@ -966,11 +918,12 @@ void TAdriaCommunicator::OnConnect(const uint64& SockId) {
 
 void TAdriaCommunicator::OnRead(const uint64& SockId, const PSIn& SIn) {
 	try {
-		TLock Lock(SocketSection);
+		{
+			TLock Lock(SocketSection);
 
-		// parse the protocol
-		CurrMsg->Read(SIn);
-
+			// parse the protocol
+			CurrMsg->Read(SIn);
+		}
 		if (CurrMsg->IsComplete()) {
 			OnMsgReceived(CurrMsg);
 		}
@@ -1092,11 +1045,15 @@ void TAdriaCommunicator::ShutDown() {
 }
 
 void TAdriaCommunicator::OnMsgReceived(const PAdriaMsg Msg) {
-	TLock Lock(CallbackSection);
+	TVec<PAdriaMsgCallback> TempCallbacks;
+	{
+		TLock Lock(CallbackSection);
+		TempCallbacks.AddV(MsgCallbacks);
+	}
 
 	CurrMsg = TAdriaMsg::New(Notify);
-	for (int i = 0; i < MsgCallbacks.Len(); i++) {
-		MsgCallbacks[i]->OnMsgReceived(Msg);
+	for (int i = 0; i < TempCallbacks.Len(); i++) {
+		TempCallbacks[i]->OnMsgReceived(Msg);
 	}
 }
 
