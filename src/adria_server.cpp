@@ -123,10 +123,13 @@ bool TDataProvider::FillCanHs() {
 	CanIdVarNmH.AddDat(108, "fresh_water");
 	CanIdVarNmH.AddDat(122, "temp_bedroom");
 	CanIdVarNmH.AddDat(123, "hum_bedroom");
+	CanIdVarNmH.AddDat(124, "lum_bedroom");
 	CanIdVarNmH.AddDat(147, "temp_ls");
 	CanIdVarNmH.AddDat(148, "hum_ls");
+	CanIdVarNmH.AddDat(149, "lum_ls");
 	CanIdVarNmH.AddDat(159, "temp_sc");
 	CanIdVarNmH.AddDat(160, "hum_sc");
+	CanIdVarNmH.AddDat(161, "lum_sc");
 
 	PredCanSet.AddKey(TUtils::FreshWaterCanId);
 
