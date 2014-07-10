@@ -110,6 +110,7 @@ int TDataProvider::EntryTblLen = 256;
 TIntStrH TDataProvider::CanIdVarNmH;
 
 TIntSet TDataProvider::PredCanSet;
+TIntIntH TDataProvider::CanIdPredCanIdH;
 
 TIntV TDataProvider::RuleEffectCanV;
 TIntV TDataProvider::RuleObsCanV;
@@ -132,6 +133,9 @@ bool TDataProvider::FillCanHs() {
 	CanIdVarNmH.AddDat(161, "lum_sc");
 
 	PredCanSet.AddKey(TUtils::FreshWaterCanId);
+
+	CanIdPredCanIdH.AddDat(108, 210);	// fresh water
+	CanIdPredCanIdH.AddDat(109, 211);	// waste water
 
 	RuleEffectCanV.Add(133);	// light 5
 	RuleEffectCanV.Add(135);	// light 22
@@ -913,7 +917,7 @@ void TAdriaCommunicator::OnConnect(const uint64& SockId) {
 	// compose adria protocol initialization request
 	Notify->OnNotifyFmt(TNotifyType::ntInfo, "Connected socket: %lu, writing desired inputs...", SockId);
 
-	Write("PUSH res_table|GET history,prediction&qminer,qm1\r\n");
+	Write("PUSH res_table|GET history,prediction&ANALYTICS,qm1\r\n");
 	Write("GET res_table\r\n");			// refresh the table
 
 	OnAdriaConnected();
@@ -1120,11 +1124,22 @@ void TAdriaApp::OnConnected() {
 
 void TAdriaApp::OnPrediction(const TInt& CanId, const TFlt& Val) {
 	try {
-		TStr ValStr = Val.GetStr();
+		TInt PredCanId = TDataProvider::CanIdPredCanIdH.GetDat(CanId);
 
-		TChA Msg = "PUSH prediction?" + CanId.GetStr() +
-				"\r\nLength=" + TInt(ValStr.Len()).GetStr() +
-				"\r\n" + ValStr + "\r\n";
+		float Value = (float) Val;
+
+		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Float length: %d", sizeof(Value));
+
+		TChA ContentChA = "";
+		ContentChA += (char) PredCanId.Val;
+		ContentChA += (char) 1;	// type float
+
+		char* ValueCh = (char*) &Value;
+		for (int i = 0; i < 4; i++) {
+			ContentChA += *(ValueCh + i);
+		}
+
+		TChA Msg = "PUSH res_table\r\nLength=" + TInt(ContentChA.Len()).GetStr() + "\r\n" + ContentChA + "\r\n";
 
 		((TAdriaCommunicator*) Communicator())->Write(Msg);
 	} catch (const PExcept& Except) {

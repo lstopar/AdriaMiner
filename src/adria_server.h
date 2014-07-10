@@ -64,6 +64,9 @@ private:
 		void Stop() { Running = false; }
 	};
 
+public:
+	static TIntIntH CanIdPredCanIdH;
+
 private:
 	static TIntStrH CanIdVarNmH;
 	static TIntSet PredCanSet;
