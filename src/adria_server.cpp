@@ -285,7 +285,7 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 }
 
 double TDataProvider::PredictFreshWaterLevel() {
-	const double Level0 = 0;
+	const double Level0 = 5;
 
 	try {
 		double CurrLevel = EntryTbl[TUtils::FreshWaterCanId];
@@ -302,7 +302,7 @@ double TDataProvider::PredictFreshWaterLevel() {
 		double Beta1 = Wgts[1];
 
 		//pred = exp(beta_0)*(exp(beta_1*L)-exp(beta_1*L_0))/beta_1
-		double Pred = exp(Beta0)*(exp(Beta1*CurrLevel) - exp(Beta1*Level0)) / Beta1;
+		double Pred = TMath::Mx(exp(Beta0)*(exp(Beta1*CurrLevel) - exp(Beta1*Level0)) / Beta1, 0.0);
 
 		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Predicted: %.2f", Pred);
 
