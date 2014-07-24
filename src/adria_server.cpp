@@ -638,7 +638,7 @@ void TDataProvider::PreprocessApriori(const TVec<TFltV>& EventInstV,
 
 			const int NIntervals = 3;
 
-			const TFltPr LumThrs(0,5);
+			const TFltPr LumThrs(2.302585092994046,5.998936561946683);
 			const TFltPr TempThrs(10,28);
 
 			ObsMat.Gen(NRows, 3*ObsInstV[0].Len());
