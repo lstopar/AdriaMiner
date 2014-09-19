@@ -9,8 +9,9 @@ namespace TAdriaUtils {
 
 class TUtils {
 public:
-	const static int FreshWaterCanId;
-	const static int WasteWaterCanId;
+	const static int BATTERY_LS_CANID;
+	const static int FRESH_WATER_CANID;
+	const static int WASTE_WATER_CANID;
 
 	static uint64 GetCurrTimeStamp();
 	static TStr GetCurrTimeStr();
@@ -26,6 +27,8 @@ public:
 	static TStr GetWaterLevelRegFNm(const TStr& DbPath) { return DbPath + "/models/water_level-predict.bin"; }
 	static TStr GetBackupWaterLevelRegFNm(const TStr& DbPath) { return DbPath + "/models/water_level-predict-backup.bin"; }
 	static TStr GetWaterLevelInstancesLogFNm(const TStr& DbPath) { return DbPath + "/water_level.log"; }
+	static TStr GetRuleStatMatFNm(const TStr& DbPath) { return DbPath + "/models/rule_statistics.bin"; }
+	static TStr GetBackupRuleStatMatFNm(const TStr& DbPath) { return DbPath + "/models/rule_statistics-backup.bin"; }
 
 	static void PrintItemSetV(const TVec<TPair<TFlt, TIntV>>& ItemSetSuppV, const PNotify& Notify);
 	static void PrintRuleCandV(const TVec<TPair<TFlt,TPair<TIntV,TInt>>>& RuleCandV, const PNotify& Notify);

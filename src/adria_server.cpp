@@ -103,13 +103,42 @@ void TDataProvider::TRuleThread::Run() {
 }
 
 /////////////////////////////////////////////////////////////////////
+// TOnlineRuleThread
+//const uint64 TDataProvider::TOnlineRuleThread::SLEEP_TM = 15000;
+//
+//TDataProvider::TOnlineRuleThread::TOnlineRuleThread(TDataProvider* Provider, const PNotify& _Notify):
+//		DataProvider(Provider),
+//		Notify(_Notify) {}
+//
+//void TDataProvider::TOnlineRuleThread::Run() {
+//	while (true) {
+//		try {
+//			uint64 StartTm = TUtils::GetCurrTimeStamp();
+//
+//			// copy the current state
+//			TFltV StateV;	DataProvider->CpyStateV(StateV);
+//
+//			// update the model
+//			DataProvider->RuleGenerator.Update(StateV);
+//
+//			uint64 Dur = TUtils::GetCurrTimeStamp() - StartTm;
+//			TSysProc::Sleep(TMath::Mx(SLEEP_TM - Dur, uint64(1000)));
+//		} catch (const PExcept& Except) {
+//			Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::TOnlineRuleThread::Run: failed to execute rule loop!");
+//			Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+//		} catch (...) {
+//			Notify->OnNotify(TNotifyType::ntErr, "TDataProvider::TOnlineRuleThread::Run: WTF!? failed to catch exception!");
+//		}
+//	}
+//}
+
+/////////////////////////////////////////////////////////////////////
 // Data handler
 uint64 TDataProvider::HistDur = 1000*60*60*24*7;	// one week
 uint64 TDataProvider::RuleWindowTm = 1000*60*60*24*3;	// 3 days
 int TDataProvider::EntryTblLen = 256;
 TIntStrH TDataProvider::CanIdVarNmH;
 
-TIntSet TDataProvider::PredCanSet;
 TIntIntH TDataProvider::CanIdPredCanIdH;
 
 TIntV TDataProvider::RuleEffectCanV;
@@ -132,10 +161,9 @@ bool TDataProvider::FillCanHs() {
 	CanIdVarNmH.AddDat(160, "hum_sc");
 	CanIdVarNmH.AddDat(161, "lum_sc");
 
-	PredCanSet.AddKey(TUtils::FreshWaterCanId);
-
-	CanIdPredCanIdH.AddDat(108, 210);	// fresh water
-	CanIdPredCanIdH.AddDat(109, 211);	// waste water
+	CanIdPredCanIdH.AddDat(TUtils::BATTERY_LS_CANID, 212);	// battery living space
+	CanIdPredCanIdH.AddDat(TUtils::FRESH_WATER_CANID, 210);	// fresh water
+	CanIdPredCanIdH.AddDat(TUtils::WASTE_WATER_CANID, 211);	// waste water
 
 	RuleEffectCanV.Add(133);	// light 5
 	RuleEffectCanV.Add(135);	// light 22
@@ -174,8 +202,10 @@ TDataProvider::TDataProvider(const TStr& _DbPath, const PNotify& _Notify):
 		RuleInstV(),
 		WaterLevelV(),
 		WaterLevelReg(DbPath, _Notify),
+//		RuleGenerator(DbPath, _Notify),
 		HistThread(),
 		RuleThread(),
+//		OnlineRuleThread(),
 		DataSection(TCriticalSectionType::cstRecursive),
 		HistSection(TCriticalSectionType::cstRecursive),
 		RuleSection(TCriticalSectionType::cstRecursive),
@@ -193,10 +223,12 @@ void TDataProvider::OnConnected() {
 		// init threads
 		HistThread = new TSampleHistThread(this, Notify);
 		RuleThread = new TRuleThread(this, Notify);
+//		OnlineRuleThread = new TOnlineRuleThread(this, Notify);
 
 		// start threads
 		HistThread->Start();
 		RuleThread->Start();
+//		OnlineRuleThread->Start();
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "TDataProvider: failed to start threads!!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
@@ -284,11 +316,31 @@ void TDataProvider::GetHistory(const int& CanId, TUInt64FltKdV& HistoryV) {
 	}
 }
 
-double TDataProvider::PredictFreshWaterLevel() {
+double TDataProvider::PredictBattery() {
+	Notify->OnNotify(TNotifyType::ntInfo, "Predicting bettery...");
+
+	try {
+		const double Level0 = 10.5;
+		const double Wgt = 26.518113677852998;
+		const double CurrLevel = EntryTbl[TUtils::BATTERY_LS_CANID];
+
+		const double BatteryPred = TMath::Mx(Wgt*(CurrLevel - Level0), 1e-5);
+
+		PredictionCallback->OnPrediction(TUtils::BATTERY_LS_CANID, BatteryPred);
+
+		return BatteryPred;
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to predict battery!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+		return 0;
+	}
+}
+
+double TDataProvider::PredictFreshWaterLevel(const bool& NotifySrv) {
 	const double Level0 = 5;
 
 	try {
-		double CurrLevel = EntryTbl[TUtils::FreshWaterCanId];
+		double CurrLevel = EntryTbl[TUtils::FRESH_WATER_CANID];
 
 		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Predicting fresh water level. Current level: %.2f", CurrLevel);
 
@@ -306,7 +358,9 @@ double TDataProvider::PredictFreshWaterLevel() {
 
 		Notify->OnNotifyFmt(TNotifyType::ntInfo, "Predicted: %.2f", Pred);
 
-		PredictionCallback->OnPrediction(TUtils::FreshWaterCanId, Pred);
+		if (NotifySrv) {
+			PredictionCallback->OnPrediction(TUtils::FRESH_WATER_CANID, Pred);
+		}
 
 		return Pred;
 	} catch (const PExcept& Except) {
@@ -320,8 +374,8 @@ double TDataProvider::PredictWasteWaterLevel() {
 	try {
 		Notify->OnNotify(TNotifyType::ntInfo, "Predicting waste water level...");
 
-		double FreshWaterPred = PredictFreshWaterLevel();
-		PredictionCallback->OnPrediction(TUtils::WasteWaterCanId, FreshWaterPred);
+		double FreshWaterPred = PredictFreshWaterLevel(false);
+		PredictionCallback->OnPrediction(TUtils::WASTE_WATER_CANID, FreshWaterPred);
 		return FreshWaterPred;
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, " TDataProvider::PredictWasteWaterLevel: Failed to make a prediction!");
@@ -379,6 +433,8 @@ void TDataProvider::LearnFreshWaterLevel() {
 			}
 		}
 
+		Notify->OnNotify(TNotifyType::ntInfo, "Finding where the water was filled...");
+
 		// compute where the water is being filled
 		const double FillThreshold = 6;
 		const double DerivThreshold = .5;
@@ -409,6 +465,8 @@ void TDataProvider::LearnFreshWaterLevel() {
 				}
 			}
 		}
+
+		Notify->OnNotify(TNotifyType::ntInfo, "Generating instances...");
 
 		IsFilling = false;
 		int FirstIdx = -1;
@@ -520,9 +578,31 @@ void TDataProvider::SampleWaterLevel() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Sampling fresh water level...");
 
 	try {
+		const uint64 Tm = TUtils::GetCurrTimeStamp();
+		const TFlt WaterLevel = EntryTbl[TUtils::FRESH_WATER_CANID];
 
+		{
+			TLock Lck(HistSection);
+			WaterLevelV.Add(TUInt64FltPr(Tm, WaterLevel));
+			PersistWaterLevelV();
+		}
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to sample fresh water level!");
+		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
+	}
+}
+
+void TDataProvider::CpyStateV(TFltV& StateV) {
+	try {
+		const int NEntries = EntryTbl.Len();
+
+		StateV.Gen(NEntries, 0);
+
+		for (int i = 0; i < NEntries; i++) {
+			StateV.Add(EntryTbl[i]);
+		}
+	} catch (const PExcept& Except) {
+		Notify->OnNotify(TNotifyType::ntErr, "Failed to copy state vector!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());
 	}
 }
@@ -531,6 +611,7 @@ void TDataProvider::MakePredictions() {
 	Notify->OnNotify(TNotifyType::ntInfo, "Making predictions and distributing...");
 
 	try {
+		PredictBattery();
 		PredictFreshWaterLevel();
 		PredictWasteWaterLevel();
 	} catch (const PExcept& Except) {
@@ -1102,7 +1183,7 @@ void TAdriaApp::OnMsgReceived(const PAdriaMsg& Msg) {
 			ProcessPushTable(Msg);
 		} else if (Msg->IsGet() && Msg->GetCommand() == TAdriaMsg::HISTORY) {
 			ProcessGetHistory(Msg);
-		} else if (Msg->IsGet() && Msg->GetCommand() == TAdriaMsg::PREDICTION && Msg->HasParams()) {
+		} else if (Msg->IsGet() && Msg->GetCommand() == TAdriaMsg::PREDICTION) {
 			ProcessGetPrediction(Msg);
 		} else {
 			Notify->OnNotifyFmt(TNotifyType::ntWarn, "Invalid message: %s", Msg->GetStr().CStr());
@@ -1314,16 +1395,8 @@ void TAdriaApp::ProcessGetHistory(const PAdriaMsg& Msg) {
 
 void TAdriaApp::ProcessGetPrediction(const PAdriaMsg& Msg) {
 	try {
-		const TInt CanId = TStr(Msg->GetParams()).GetInt();
-
-		if (CanId == TUtils::FreshWaterCanId) {	// fresh water level
-			DataProvider.PredictFreshWaterLevel();
-		} else if (CanId == TUtils::WasteWaterCanId) {
-			DataProvider.PredictWasteWaterLevel();
-		} else {
-			// no other predictions are implemented yet
-			Notify->OnNotifyFmt(TNotifyType::ntInfo, "Invalid CAN for predictions: %d", CanId.Val);
-		}
+		Notify->OnNotify(TNotifyType::ntInfo, "Received prediction request!");
+		DataProvider.MakePredictions();
 	} catch (const PExcept& Except) {
 		Notify->OnNotify(TNotifyType::ntErr, "Failed to process GET prediction!");
 		Notify->OnNotify(TNotifyType::ntErr, Except->GetMsgStr());

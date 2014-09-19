@@ -1,5 +1,5 @@
-#ifndef PROCESSING_H_
-#define PROCESSING_H_
+#ifndef ANALYTICS_H_
+#define ANALYTICS_H_
 
 #include <base.h>
 #include <net.h>
@@ -76,6 +76,82 @@ private:
 	void InitDefaultModel();
 	// for logging the instances
 	void LogInstVValV(const TVec<TFltV>& InstV, const TFltV& ValV);
+};
+
+typedef TVVec<TUInt64FltPr> TStatMat;
+typedef TPair<TStatMat, TStatMat> TStatMatPr;
+typedef TIntV TItemSet;
+typedef TPair<TItemSet,TInt> TRule;
+typedef TVec<TRule> TRuleV;
+
+//////////////////////////////////////////////////////////////
+// Online rule generator
+class TOnlineRuleGenerator {
+private:
+	const static double LUM_LOW, LUM_HIGH;
+	const static double TEMP_LOW, TEMP_HIGH;
+
+	const static int MX_ITEMSET_SIZE;
+
+	const static double THRESHOLD;
+	const static double FORGET_FACT;
+
+	static TIntV ActCanIdV;
+	static TIntV LumCanIdV;
+	static TIntV TempCanIdV;
+
+	static TIntV IdxCanIdV;					// a vector with CAN IDs at the appropriate indexes
+
+	static int ActMatDim;
+	static int ObsMatRows, ObsMatCols;
+
+	static int NActAttrs, NObsAttrs;
+
+	static TIntIntVH ActRowIdxAttrIdxVH;		// hash table mapping an index in the actuators matrix to the corresponding actuator item set
+	static TIntIntVH ObsRowIdxAttrIdxVH;		// hash table mapping an index in the observations matrix to the corresponding observation item set
+	static TIntPrV ActAttrIdxRowIdxPrV;			// a vector mapping an actuator index to an index in the actuators matrix
+	static TIntPrV ObsAttrIdxRowIdxPrV;			// a vector mapping an observation index to an index in the observations matrix
+
+	static bool Initialized;
+
+	const TStr DbPath;
+
+	// a pair which holds the statistics matrix for the actuators and the statistics matrix for
+	// observations vs actuators
+	TStatMatPr StatMatPr;
+
+	TCriticalSection MatSection;
+
+	PNotify Notify;
+
+public:
+	TOnlineRuleGenerator(const TStr& DbPath, const PNotify& Notify);
+
+	void Update(const TFltV& StateV);		// TODO unlock ???
+	void GetAllRules(TRuleV& RuleV) const;	// TODO lock ???
+
+private:
+	// returns the conditional probability P(A_i | A_j)
+	double GetProb(const TStatMat& StatMat, const int& i, const int& j) const;
+
+	void ExtractState(const TFltV& TableV, TFltV& ActStateV, TFltV& LumStateV, TFltV& TempStateV) const;
+	void CalcAttrValV(const TFltV& ActStateV, const TFltV& LumStateV, const TFltV& TempStateV, TIntV& ActValV, TIntV& ObsValV) const;
+
+	void PersistStatMat();
+	void LoadStatMat();
+	void CreateStatMat();
+
+	// returns true if all the items in the item set are 1
+	static bool IsActive(const TIntV& ItemSet, const TIntV& AttrValV);
+
+	static int CalcDim(const int& NAttrs);
+	static void GenItemSetV(const int& MxIdx, const int& MxItems, TVec<TIntV>& ItemSetV, const int& CurrIdx = 0);
+	static int ActIdxToCanId(const int& ActIdx);
+	static int ObsIdxToCanId(const int& ObsIdx);
+	static bool InitCanV();
+
+	static long Fac(const int& N);
+	static int Nck(const int& N, const int& K);
 };
 
 //===========================================================================================
@@ -278,4 +354,4 @@ bool TApriori<TSupp,TConf>::PrefixEq(const TIntV& Vec1, const TIntV& Vec2, const
 
 }
 
-#endif /* PROCESSING_H_ */
+#endif /* ANALYTICS_H_ */

@@ -64,12 +64,23 @@ private:
 		void Stop() { Running = false; }
 	};
 
+//	class TOnlineRuleThread: public TThread {
+//	private:
+//		const static uint64 SLEEP_TM;
+//
+//		TDataProvider* DataProvider;
+//		PNotify Notify;
+//	public:
+//		TOnlineRuleThread(TDataProvider* Provider, const PNotify& _Notify);
+//
+//		void Run();
+//	};
+
 public:
 	static TIntIntH CanIdPredCanIdH;
 
 private:
 	static TIntStrH CanIdVarNmH;
-	static TIntSet PredCanSet;
 	static uint64 HistDur;
 	static uint64 RuleWindowTm;
 	static int EntryTblLen;
@@ -82,15 +93,17 @@ private:
 	static TIntIntH RuleObsCanIdIdxH;
 
 	const TStr DbPath;
-	TFltV EntryTbl;				// current state
-	THash<TInt, TUInt64FltKdV> HistH;	// history for showing graphs and making predictions
-	TVec<TKeyDat<TUInt64,TFltV>> RuleInstV;	// table that contains values used to learn association rules
+	TFltV EntryTbl;								// current state
+	THash<TInt, TUInt64FltKdV> HistH;			// history for showing graphs and making predictions
+	TVec<TKeyDat<TUInt64,TFltV>> RuleInstV;		// table that contains values used to learn association rules
 	TUInt64FltPrV WaterLevelV;
 
 	TLinRegWrapper WaterLevelReg;
+//	TOnlineRuleGenerator RuleGenerator;
 
 	PThread HistThread;
 	PThread RuleThread;
+//	PThread OnlineRuleThread;
 
 	TPredictionCallback* PredictionCallback;
 	TRulesGeneratedCallback* RulesCallback;
@@ -117,10 +130,13 @@ public:
 	void GetHistory(const int& CanId, TUInt64FltKdV& HistoryV);
 
 	// predictions
+	// predicts when the battery will be empty
+	double PredictBattery();
 	// predicts when the fresh water will be empty
-	double PredictFreshWaterLevel();
+	double PredictFreshWaterLevel(const bool& NotifySrv=true);
 	// predicts when the waste water will be full
 	double PredictWasteWaterLevel();
+	void MakePredictions();
 
 	// update fresh water prediction model
 	void LearnFreshWaterLevel();
@@ -138,9 +154,8 @@ private:
 	void SampleHistFromV(const TFltV& StateV, const uint64& SampleTm);
 	void SampleHist();
 	void SampleWaterLevel();
+	void CpyStateV(TFltV& StateV);
 
-	// analytics
-	void MakePredictions();
 	// generate rules for UMKO
 	void GenRules();
 
