@@ -237,6 +237,7 @@ void TDataProvider::OnConnected() {
 
 void TDataProvider::AddRec(const int& CanId, const PJsonVal& Rec) {
 	try {
+		if (CanId >= TDataProvider::EntryTblLen) { return; }
 		{
 			TLock Lock(DataSection);
 
