@@ -134,6 +134,8 @@ void TDataProvider::TRuleThread::Run() {
 
 /////////////////////////////////////////////////////////////////////
 // Data handler
+const bool TDataProvider::LOG_READINGS = false;
+
 uint64 TDataProvider::HistDur = 1000*60*60*24*7;	// one week
 uint64 TDataProvider::RuleWindowTm = 1000*60*60*24*3;	// 3 days
 int TDataProvider::EntryTblLen = 256;
@@ -518,6 +520,8 @@ void TDataProvider::LearnFreshWaterLevel() {
 
 
 void TDataProvider::AddRecToLog(const int& CanId, const PJsonVal& Rec) {
+	if (!LOG_READINGS) { return; }
+
 	try {
 		TLock Lock(DataSection);
 

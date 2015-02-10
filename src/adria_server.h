@@ -80,6 +80,8 @@ public:
 	static TIntIntH CanIdPredCanIdH;
 
 private:
+	const static bool LOG_READINGS;
+
 	static TIntStrH CanIdVarNmH;
 	static uint64 HistDur;
 	static uint64 RuleWindowTm;
